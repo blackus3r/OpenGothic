@@ -117,7 +117,7 @@ struct Npc::TransformBack {
 
   TransformBack(Npc& owner, zenkit::DaedalusVm& vm, Serialize& fin) {
     hnpc           = std::make_shared<zenkit::INpc>();
-    hnpc->user_ptr = this;
+    hnpc->user_ptr = nullptr;
     fin.readNpc(vm, hnpc);
     invent.load(fin,owner);
     fin.read(talentsSk,talentsVl);
@@ -137,7 +137,9 @@ struct Npc::TransformBack {
     auto level    = self.hnpc->level;
     std::memcpy(aivar,self.hnpc->aivar,sizeof(aivar));
 
-    self.hnpc           = hnpc;
+    *self.hnpc          = *hnpc;
+
+    self.hnpc->user_ptr = &self;
     self.hnpc->exp      = exp;
     self.hnpc->exp_next = exp_next;
     self.hnpc->lp       = lp;
