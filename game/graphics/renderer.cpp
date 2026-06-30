@@ -88,11 +88,11 @@ Renderer::Renderer(Tempest::Swapchain& swapchain)
 
   Gothic::inst().togglePathtrace.bind(this, &Renderer::togglePathtrace);
 
-  settings.giEnabled   = Gothic::options().doRtGi;
-  settings.vsmEnabled  = Gothic::options().doVirtualShadow;
-  settings.rtsmEnabled = Gothic::options().doSoftwareShadow;
-  settings.swrEnabled  = Gothic::options().swRenderingPreset>0;
-  settings.swrtEnabled = Gothic::options().doSoftwareRT;
+  settings.giMethod         = Gothic::options().doGi;
+  settings.vsmEnabled       = Gothic::options().doVirtualShadow;
+  settings.rtsmEnabled      = Gothic::options().doSoftwareShadow;
+  settings.swrEnabled       = Gothic::options().swRenderingPreset>0;
+  settings.swrtEnabled      = Gothic::options().doSoftwareRT;
 
   sky.cloudsLut     = device.image2d   (sky.lutRGBAFormat,  2,  1);
   sky.transLut      = device.attachment(sky.lutRGBFormat, 256, 64);
@@ -193,7 +193,7 @@ void Renderer::setupSettings() {
 
   auto prevVidResIndex = settings.vidResIndex;
   settings.vidResIndex = Gothic::inst().settingsGetF("INTERNAL","vidResIndex");
-  settings.aaEnabled = (Gothic::options().aaPreset>0) && (settings.vidResIndex==0);
+  settings.aaEnabled   = (Gothic::options().aaPreset>0) && (settings.vidResIndex==0);
 
   // direct lighting
   if(settings.rtsmEnabled)
@@ -216,8 +216,23 @@ void Renderer::setupSettings() {
   else
     lights.directLightPso = &shaders.lights;
 
+  const auto gi = settings.giMethod;
+  if(gi==GiMethod::Probes && Shaders::isGi1Supported() && Gothic::options().doRayQuery) {
+    settings.giMethod = GiMethod::Probes;
+    }
+  else if(gi==GiMethod::IrrC && Shaders::isGi2Supported() && Gothic::options().doRayQuery) {
+    settings.giMethod = GiMethod::IrrC;
+    }
+  else {
+    settings.giMethod = GiMethod::None;
+    }
+
   if(prevVidResIndex!=settings.vidResIndex) {
     resetSwapchain();
+    }
+  if(settings.giMethod!=GiMethod::None) {
+    // need a projective shadow, for gi
+    resetShadowmap();
     }
   resetSkyFog();
   resetShadowmap();
@@ -230,21 +245,15 @@ void Renderer::toggleGi() {
   if(!Gothic::options().doRayQuery)
     return;
 
-  auto prop = device.properties();
-  if(prop.tex2d.maxSize<4096 || !prop.hasStorageFormat(R11G11B10UF) || !prop.hasStorageFormat(R16))
-    return;
-
-  settings.giEnabled = !settings.giEnabled;
+  if(settings.giMethod==GiMethod::None && Gothic::options().doGi!=GiMethod::None)
+    settings.giMethod = Gothic::options().doGi;
+  else if(settings.giMethod==GiMethod::None && Shaders::isGi1Supported())
+    settings.giMethod = GiMethod::Probes; // default for now
+  else
+    settings.giMethod = GiMethod::None;
 
   device.waitIdle();
-  if(auto wview  = Gothic::inst().worldView()) {
-    wview->resetRendering();
-    }
-  if(settings.giEnabled) {
-    // need a projective shadow, for gi
-    resetShadowmap();
-    }
-  prepareUniforms();
+  setupSettings();
   }
 
 void Renderer::toggleVsm() {
@@ -325,7 +334,7 @@ bool Renderer::requiresTlas() const {
   if(!Gothic::options().doRayQuery)
     return false;
 
-  if(settings.giEnabled || settings.pathTraceEnabled)
+  if(settings.giMethod!=GiMethod::None || settings.pathTraceEnabled)
     return true;
   if(!(settings.rtsmEnabled || settings.vsmEnabled))
     return true;
@@ -372,6 +381,14 @@ StorageBuffer& Renderer::usesSsbo(Tempest::StorageBuffer& ret, size_t size) {
   return ret;
   }
 
+StorageBuffer& Renderer::usesSsboInit(Tempest::StorageBuffer& ret, size_t size) {
+  if(ret.byteSize()==size)
+    return ret;
+  Resources::recycle(std::move(ret));
+  ret = Resources::device().ssbo(nullptr, size);
+  return ret;
+  }
+
 StorageBuffer& Renderer::usesScratch(Tempest::StorageBuffer& ret, size_t size) {
   if(ret.byteSize()>=size)
     return ret;
@@ -404,7 +421,7 @@ void Renderer::resetShadowmap() {
   for(int i=0; i<Resources::ShadowLayers; ++i)
     Resources::recycle(std::move(shadowMap[i]));
 
-  const bool forceSm1 = (settings.giEnabled || settings.pathTraceEnabled || sky.quality==PathTrace);
+  const bool forceSm1 = (settings.giMethod==GiMethod::Probes || settings.pathTraceEnabled || sky.quality==PathTrace);
   for(int i=0; i<Resources::ShadowLayers; ++i) {
     if(!(i==1 && forceSm1)) {
       if(settings.vsmEnabled && !(settings.rtsmEnabled && i==1))
@@ -566,7 +583,9 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
   //tex.push_back(&textureCast(shadowMap[1]));
   //tex.push_back(&textureCast<const Texture2d&>(shadowMap[0]));
   //tex.push_back(&textureCast<const Texture2d&>(vsm.pageData));
-  tex.push_back(&textureCast<const Texture2d&>(swrt.outputImage));
+  //tex.push_back(&textureCast<const Texture2d&>(swrt.outputImage));
+  tex.push_back(&textureCast<const Texture2d&>(surf.dbgImage));
+  //tex.push_back(&textureCast<const Texture2d&>(surf.irrImage));
 
   static int size = 400;
   int left = 10;
@@ -653,6 +672,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareSSAO(cmd,*wview);
   prepareFog (cmd,*wview);
   prepareGi  (cmd,*wview);
+  prepareSurfels(cmd,*wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
   drawShadowResolve(cmd,*wview);
@@ -670,8 +690,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   cmd.setDebugMarker("Translucent");
   wview->drawTranslucent(cmd, fId);
 
+  //drawHashDbg(sceneLinear, cmd, *wview);
   drawProbesDbg(cmd, *wview);
   drawProbesHitDbg(cmd);
+  drawSurfelsDbg(cmd, *wview);
   drawVsmDbg(cmd, *wview);
   drawSwrDbg(cmd, *wview);
   drawRtsmDbg(cmd, *wview);
@@ -696,6 +718,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   //drawRayQueryDbg(cmd, *wview);
+  //drawHashDbg(result, cmd, *wview);
 
   wview->postFrameupdate();
   }
@@ -986,6 +1009,29 @@ void Renderer::drawRtsmDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   cmd.setBinding(2, rtsm.pages);
 #endif
   cmd.setPipeline(shaders.rtsmDbg);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawHashDbg(Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
+  static bool enable = true;
+  if(!enable)
+    return;
+
+  auto& scene = wview.sceneGlobals();
+
+  struct Push {
+    Vec3 originLwc;
+    } push;
+  push.originLwc = scene.originLwc;
+
+  cmd.setDebugMarker("Hash-dbg");
+  cmd.setPushData(push);
+  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(2, gbufNormal);
+  cmd.setBinding(3, zbuffer);
+
+  cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
+  cmd.setPipeline(shaders.hashDbg);
   cmd.draw(nullptr, 0, 3);
   }
 
@@ -1899,6 +1945,215 @@ void Renderer::prepareEpipolar(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Wo
   cmd.dispatch(uint32_t(epTrace.h()));
   }
 
+void Renderer::prepareSurfels(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
+  static bool enable = true;
+  if(!enable)
+    return;
+
+  if(settings.giMethod!=GiMethod::IrrC || !settings.zCloudShadowScale)
+    return;
+
+  const uint32_t maxSurfels      = surf.maxSurfels;
+  const int32_t  tileSize        = 128;
+  const int32_t  DefaultCoverage = 128;
+  const auto     binCount        = tileCount(zbuffer.size(), DefaultCoverage);
+
+  auto& scene     = wview.sceneGlobals();
+  auto& dbgImage  = usesImage2d (surf.dbgImage, TextureFormat::RGBA8,   zbuffer.size());
+  auto& irrImage  = usesImage2d (surf.irrImage, TextureFormat::RGBA16F, zbuffer.size());
+  auto& surfels   = usesSsboInit(surf.surfels,  shaders.surfAlloc.sizeofBuffer(4, maxSurfels));
+
+  auto& surfCnts  = usesImage2d(surf.surfCnts, TextureFormat::R32U, binCount);
+  auto& surfBins  = usesImage2d(surf.surfBins, TextureFormat::R32U, binCount);
+  auto& surfList  = usesSsbo   (surf.surfList, 16*maxSurfels*sizeof(uint32_t));
+
+  struct Push {
+    Vec3     originLwc;
+    uint32_t tileSize;
+    uint32_t pass;
+    } push = {};
+  push.originLwc = scene.originLwc;
+  push.tileSize  = uint32_t(tileSize);
+  push.pass      = 0;
+
+  cmd.setDebugMarker("Surfels");
+
+  // prev-frame
+  {
+    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+    cmd.setBinding(1, zbuffer);
+    cmd.setBinding(2, surfels);
+
+    cmd.setPipeline(shaders.surfUpdate);
+    cmd.dispatchThreads(maxSurfels);
+  }
+
+  static bool gc = true;
+  if(gc) {
+    surfelsBinning(cmd, wview, tileSize, false);
+
+    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+    cmd.setBinding(1, hiz.hiZ);
+    cmd.setBinding(2, zbuffer);
+    cmd.setBinding(3, surfels);
+    //
+    cmd.setBinding(6, surfCnts);
+    cmd.setBinding(7, surfBins);
+    cmd.setBinding(8, surfList);
+
+    cmd.setPushData(scene.znear);
+    cmd.setPipeline(shaders.surfCulling);
+    cmd.dispatchThreads(maxSurfels);
+
+    cmd.setPushData(push);
+    cmd.setPipeline(shaders.surfBinSort); // assist with stable GC
+    cmd.dispatch(surfBins.size());
+
+    cmd.setPipeline(shaders.surfDecimate);
+    cmd.dispatchThreads(maxSurfels);
+
+    cmd.setPipeline(shaders.surfCompact);
+    cmd.dispatch(1);
+    }
+
+  static bool rays = true;
+  if(rays) {
+    surfelsTrace(cmd, wview, surfels, false);
+    }
+
+  static bool apply = true;
+  if(apply) {
+    surfelsBinning(cmd, wview, tileSize, false);
+
+    cmd.setPushData(push);
+    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+    cmd.setBinding(1, irrImage);
+    cmd.setBinding(2, gbufNormal);
+    cmd.setBinding(3, zbuffer);
+    cmd.setBinding(4, surfels);
+    //
+    cmd.setBinding(6, surfCnts);
+    cmd.setBinding(7, surfBins);
+    cmd.setBinding(8, surfList);
+    //
+    cmd.setBinding(11, dbgImage);
+
+    cmd.setPipeline(shaders.surfApply);
+    cmd.dispatchThreads(zbuffer.size());
+    }
+
+  // current-frame
+  static bool alloc = true;
+  if(alloc) {
+    cmd.setPushData(push);
+    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+    cmd.setBinding(1, irrImage);
+    cmd.setBinding(2, gbufNormal);
+    cmd.setBinding(3, zbuffer);
+    cmd.setBinding(4, surfels);
+    //
+    cmd.setBinding(6, surfCnts);
+    cmd.setBinding(7, surfBins);
+    cmd.setBinding(8, surfList);
+    //
+    cmd.setBinding(11, dbgImage);
+
+    const auto tc = tileCount(zbuffer.size(), 128);
+    cmd.setPipeline(shaders.surfAlloc);
+    cmd.dispatch(tc);
+    }
+
+  if(rays) {
+    surfelsTrace(cmd, wview, surfels, true);
+    }
+
+  if(apply) {
+    surfelsBinning(cmd, wview, tileSize, true);
+
+    push.pass = 1;
+    cmd.setPushData(push);
+    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+    cmd.setBinding(1, irrImage);
+    cmd.setBinding(2, gbufNormal);
+    cmd.setBinding(3, zbuffer);
+    cmd.setBinding(4, surfels);
+    //
+    cmd.setBinding(6, surfCnts);
+    cmd.setBinding(7, surfBins);
+    cmd.setBinding(8, surfList);
+    //
+    cmd.setBinding(11, dbgImage);
+
+    cmd.setPipeline(shaders.surfApply);
+    cmd.dispatchThreads(zbuffer.size());
+    }
+  }
+
+void Renderer::surfelsBinning(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, int32_t tileSize, bool postPass) {
+  const  uint32_t maxSurfels = surf.maxSurfels;
+
+  auto& scene       = wview.sceneGlobals();
+  auto& surfels     = surf.surfels;
+  auto& binCtrl     = usesSsboInit(surf.surfBinsCtrl, sizeof(uint32_t));
+  auto& surfCnts    = surf.surfCnts;
+  auto& surfBins    = surf.surfBins;
+  auto& surfList    = surf.surfList;
+
+  struct Push {
+    int32_t tileSize;
+    int32_t allocPass;
+    int32_t postPass;
+    } push = {};
+  push.tileSize = tileSize;
+  push.postPass = postPass ? 1 : 0;
+
+  cmd.setPushData(push);
+  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, binCtrl);
+  cmd.setBinding(2, surfels);
+  cmd.setBinding(3, surfCnts);
+  cmd.setBinding(4, surfBins);
+  cmd.setBinding(5, surfList);
+
+  cmd.setPipeline(shaders.surfBinClear);
+  cmd.dispatchThreads(surfBins.size());
+
+  push.allocPass = 0;
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.surfBinPass);
+  cmd.dispatchThreads(maxSurfels); //TODO: indirect
+
+  cmd.setPipeline(shaders.surfBinAlloc);
+  cmd.dispatchThreads(surfBins.size());
+
+  push.allocPass = 1;
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.surfBinPass);
+  cmd.dispatchThreads(maxSurfels);
+  }
+
+void Renderer::surfelsTrace(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, StorageBuffer& surfels, bool postPass) {
+  auto& scene = wview.sceneGlobals();
+
+  const uint32_t pass = postPass ? 1 : 0;
+  cmd.setPushData(pass);
+  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, surfels);
+  cmd.setBinding(2, sky.viewCldLut);
+  //
+  cmd.setBinding(6, scene.rtScene.tlas);
+  cmd.setBinding(7, Sampler::trillinear());
+  cmd.setBinding(8, scene.rtScene.tex);
+  cmd.setBinding(9, scene.rtScene.vbo);
+  cmd.setBinding(10,scene.rtScene.ibo);
+  cmd.setBinding(11,scene.rtScene.rtDesc);
+
+  cmd.setPipeline(shaders.surfPathtrace);
+  //cmd.dispatchThreads(maxSurfels);
+  const uint32_t offset = postPass ? sizeof(uint32_t) : 0;
+  cmd.dispatchIndirect(surfels, offset);
+  }
+
 void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   auto& scene = wview.sceneGlobals();
 
@@ -1912,7 +2167,7 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   }
 
 void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.giEnabled || !settings.zCloudShadowScale) {
+  if(settings.giMethod!=GiMethod::Probes || !settings.zCloudShadowScale) {
     return;
     }
 
@@ -2179,8 +2434,25 @@ void Renderer::drawRayQueryDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, co
   cmd.draw(nullptr, 0, 3);
   }
 
+void Renderer::drawSurfelsDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+  if(settings.giMethod!=GiMethod::IrrC)
+    return;
+
+  static bool enable = false;
+  if(!enable)
+    return;
+
+  cmd.setDebugMarker("GI-dbg");
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, surf.surfels);
+  cmd.setBinding(2, gbufNormal,  Sampler::nearest());
+  cmd.setBinding(3, sceneDepth,  Sampler::nearest());
+  cmd.setPipeline(shaders.surfDbg);
+  cmd.draw(nullptr, 0, 36, 0, surf.maxSurfels);
+  }
+
 void Renderer::drawProbesDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
-  if(!settings.giEnabled)
+  if(settings.giMethod!=GiMethod::Probes)
     return;
 
   static bool enable = false;
@@ -2197,7 +2469,7 @@ void Renderer::drawProbesDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview
   }
 
 void Renderer::drawProbesHitDbg(Encoder<CommandBuffer>& cmd) {
-  if(!settings.giEnabled)
+  if(settings.giMethod!=GiMethod::Probes)
     return;
 
   static bool enable = false;
@@ -2219,30 +2491,31 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
   if(!enable)
     return;
 
-  if(settings.giEnabled && settings.zCloudShadowScale) {
-    cmd.setDebugMarker("AmbientLight");
-    cmd.setBinding(0, view.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, gi.probesLighting);
-    cmd.setBinding(2, gbufDiffuse,   Sampler::nearest());
-    cmd.setBinding(3, gbufNormal,    Sampler::nearest());
-    cmd.setBinding(4, zbuffer,       Sampler::nearest());
-    cmd.setBinding(5, ssao.ssaoBlur, Sampler::nearest());
-    cmd.setBinding(6, gi.hashTable);
-    cmd.setBinding(7, gi.probes);
-    cmd.setPipeline(shaders.probeAmbient);
-    cmd.draw(nullptr, 0, 3);
-    return;
-    }
-
   cmd.setDebugMarker("AmbientLight");
   cmd.setBinding(0, view.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
   cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-  cmd.setBinding(3, sky.irradianceLut);
-  if(settings.zCloudShadowScale) {
+  if(settings.giMethod==GiMethod::IrrC && settings.zCloudShadowScale) {
+    cmd.setBinding(3, surf.irrImage, Sampler::nearest(ClampMode::ClampToEdge));
+    cmd.setBinding(4, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge)); //TODO: remove once splatting is working
+    cmd.setBinding(5, surf.surfels);
+    cmd.setPipeline(shaders.ambientLightSurf);
+    }
+  else if(settings.giMethod==GiMethod::Probes && settings.zCloudShadowScale) {
+    cmd.setBinding(3, ssao.ssaoBlur, Sampler::nearest());
+    cmd.setBinding(4, zbuffer,       Sampler::nearest());
+    cmd.setBinding(5, gi.hashTable);
+    cmd.setBinding(6, gi.probes);
+    cmd.setBinding(7, gi.probesLighting);
+    cmd.setPipeline(shaders.probeAmbient);
+    }
+  else if(settings.zCloudShadowScale) {
+    cmd.setBinding(3, sky.irradianceLut);
     cmd.setBinding(4, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge));
     cmd.setPipeline(shaders.ambientLightSsao);
-    } else {
+    }
+  else {
+    cmd.setBinding(3, sky.irradianceLut);
     cmd.setPipeline(shaders.ambientLight);
     }
   cmd.draw(nullptr, 0, 3);

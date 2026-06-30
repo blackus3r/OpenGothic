@@ -27,10 +27,12 @@ class Shaders {
     static Shaders& inst();
     static bool isVsmSupported();
     static bool isRtsmSupported();
+    static bool isGi1Supported();
+    static bool isGi2Supported();
 
     Tempest::RenderPipeline  lights, lightsRq, lightsVsm;
     Tempest::RenderPipeline  directLight,  directLightSh, directLightRq;
-    Tempest::RenderPipeline  ambientLight, ambientLightSsao;
+    Tempest::RenderPipeline  ambientLight, ambientLightSsao, ambientLightSurf;
 
     Tempest::ComputePipeline copyBuf;
     Tempest::ComputePipeline copyImg;
@@ -75,6 +77,7 @@ class Shaders {
     // RT/RQ
     Tempest::RenderPipeline  rtDbg;
     Tempest::RenderPipeline  rtPathtrace;
+    Tempest::RenderPipeline  hashDbg;
 
     // GI
     Tempest::RenderPipeline  probeDbg, probeHitDbg;
@@ -82,6 +85,15 @@ class Shaders {
     Tempest::ComputePipeline probeVote, probePrune, probeAlocation;
     Tempest::ComputePipeline probeTrace, probeLighting;
     Tempest::RenderPipeline  probeAmbient;
+
+    // GI-Surf
+    Tempest::RenderPipeline  surfDbg;
+    Tempest::ComputePipeline surfBinClear, surfBinPass, surfBinAlloc, surfBinSort;
+
+    Tempest::ComputePipeline surfAlloc, surfApply;
+    Tempest::ComputePipeline surfUpdate, surfCulling, surfDecimate, surfCompact;
+
+    Tempest::ComputePipeline surfPathtrace;
 
     // Epipolar
     Tempest::ComputePipeline fogEpipolarVsm;

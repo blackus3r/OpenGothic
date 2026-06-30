@@ -1,0 +1,56 @@
+#version 450
+
+#include "lighting/surfels/surf_common.glsl"
+#include "scene.glsl"
+#include "common.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std140, push_constant) uniform Push {
+  int tileSize;
+  int allocPass;
+  int postPass;
+  };
+layout(binding = 0, std140) uniform UboScene {
+  SceneDesc scene;
+  };
+
+layout(binding = 1, std430) buffer SB0 { uint binAlloc; };
+layout(binding = 2, std430) readonly buffer SB1 { SurfHeader header; Surfel surfels[]; } surf;
+layout(binding = 3, r32ui)  uniform uimage2D          surfCnts;
+layout(binding = 4, r32ui)  uniform readonly uimage2D surfBins;
+layout(binding = 5, std430) buffer SB2 { uint surfelIds[]; };
+
+void main() {
+  const uint surfelId = gl_GlobalInvocationID.x;
+  if(surfelId>=surf.header.count)
+    return;
+  if(surfelId<surf.header.count-surf.header.added && postPass==1)
+    return;
+
+  const Surfel p          = surf.surfels[surfelId];
+  const ivec2  fragCoord  = p.fragCoord;
+  const int    radiusPix  = DefaultCoverage;
+
+  if(p.radius==0)
+    return;
+
+  ivec2  pos0 = ivec2(fragCoord-radiusPix)/tileSize;
+  ivec2  pos1 = ivec2(fragCoord+radiusPix)/tileSize + 1;
+
+  ivec2 sz   = imageSize(surfCnts);
+  pos0 = max(ivec2(0), pos0);
+  pos1 = min(sz,       pos1);
+
+  for(int y=pos0.y; y<pos1.y; ++y)
+    for(int x=pos0.x; x<pos1.x; ++x) {
+      const ivec2 tile = ivec2(x, y);
+      const uint  lptr = imageAtomicAdd(surfCnts, tile, 1);
+      if(allocPass==0)
+        continue;
+      const uint ptr = imageLoad(surfBins, tile).x + lptr;
+      if(ptr>=surfelIds.length())
+        return; // error! Must be too little memmory for the binning
+      surfelIds[ptr] = surfelId;
+      }
+  }

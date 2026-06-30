@@ -84,7 +84,7 @@ Gothic::Gothic() {
   auto& gpu = Resources::device().properties();
   if(gpu.raytracing.rayQuery) {
     opts.doRayQuery = CommandLine::inst().isRayQuery();
-    opts.doRtGi     = opts.doRayQuery && CommandLine::inst().isRtGi();
+    opts.doGi       = CommandLine::inst().isRtGi();
     }
 
   if(hasMeshShader()) {

@@ -75,6 +75,7 @@ void Shaders::compileShaders() {
 
   ambientLight       = ambientLightShader("ambient_light");
   ambientLightSsao   = ambientLightShader("ambient_light_ssao");
+  ambientLightSurf   = ambientLightShader("ambient_light_surf");
 
   irradiance         = computeShader("irradiance.comp.sprv");
   cloudsLut          = computeShader("clouds_lut.comp.sprv");
@@ -181,6 +182,7 @@ void Shaders::compileShaders() {
   if(Gothic::options().doRayQuery) {
     rtDbg       = postEffect("triangle_uv", "rt_dbg", RenderState::ZTestMode::NoEqual);
     }
+  hashDbg = postEffect("triangle_uv", "hash_dbg");
 
   if(Gothic::options().doRayQuery) {
     RenderState state;
@@ -197,7 +199,7 @@ void Shaders::compileShaders() {
     rtPathtrace = device.pipeline(Triangles,state,vs,fs);
     }
 
-  if(Gothic::options().doRayQuery) {
+  if(isGi1Supported()) {
     RenderState state;
     state.setCullFaceMode(RenderState::CullMode::NoCull);
     state.setZTestMode   (RenderState::ZTestMode::Less);
@@ -233,6 +235,34 @@ void Shaders::compileShaders() {
     sh = GothicShader::get("probe_ambient.frag.sprv");
     fs = device.shader(sh.data,sh.len);
     probeAmbient = device.pipeline(Triangles,state,vs,fs);
+    }
+
+  if(isGi2Supported()) {
+    RenderState state;
+    state.setCullFaceMode(RenderState::CullMode::NoCull);
+    state.setZTestMode   (RenderState::ZTestMode::Less);
+    state.setZWriteEnabled(false);
+
+    auto sh = GothicShader::get("surf_dbg.vert.sprv");
+    auto vs = device.shader(sh.data,sh.len);
+    sh = GothicShader::get("surf_dbg.frag.sprv");
+    auto fs = device.shader(sh.data,sh.len);
+    surfDbg = device.pipeline(Triangles,state,vs,fs);
+
+    surfBinPass  = computeShader("surf_bin_pass.comp.sprv");
+    surfBinClear = computeShader("surf_bin_clear.comp.sprv");
+    surfBinAlloc = computeShader("surf_bin_alloc.comp.sprv");
+    surfBinSort  = computeShader("surf_bin_sort.comp.sprv");
+
+    surfUpdate   = computeShader("surf_update.comp.sprv");
+    surfCulling  = computeShader("surf_culling.comp.sprv");
+    surfDecimate = computeShader("surf_decimate.comp.sprv");
+    surfCompact  = computeShader("surf_compact.comp.sprv");
+
+    surfAlloc    = computeShader("surf_alloc.comp.sprv");
+    surfApply    = computeShader("surf_apply.comp.sprv");
+
+    surfPathtrace = computeShader("surf_pathtrace.comp.sprv");
     }
 
   if(Shaders::isVsmSupported()) {
@@ -352,6 +382,28 @@ bool Shaders::isRtsmSupported() {
   if(gpu.compute.maxInvocations<512 || gpu.compute.maxSharedMemory<32*1024 || !gpu.descriptors.nonUniformIndexing) {
     return false;
     }
+  return true;
+  }
+
+bool Shaders::isGi1Supported() {
+  auto& gpu = Resources::device().properties();
+  if(!gpu.raytracing.rayQuery)
+    return false;
+  if(!gpu.hasStorageFormat(R11G11B10UF) || !gpu.hasStorageFormat(R16))
+    return false;
+  if(gpu.tex2d.maxSize<4096 || gpu.compute.maxInvocations<256 || !gpu.descriptors.nonUniformIndexing)
+    return false;
+  return true;
+  }
+
+bool Shaders::isGi2Supported() {
+  auto& gpu = Resources::device().properties();
+  if(!gpu.raytracing.rayQuery)
+    return false; //TODO: splatting
+  if(gpu.compute.maxInvocations<256 || !gpu.descriptors.nonUniformIndexing)
+    return false;
+  if(!gpu.hasStorageFormat(RGBA16F))
+    return false;
   return true;
   }
 

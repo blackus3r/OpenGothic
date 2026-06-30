@@ -217,6 +217,7 @@ add_shader(direct_light_vsm.frag     virtual_shadow/vsm_direct_light.frag)
 
 add_shader(ambient_light.frag        lighting/ambient_light.frag)
 add_shader(ambient_light_ssao.frag   lighting/ambient_light.frag -DSSAO)
+add_shader(ambient_light_surf.frag   lighting/ambient_light.frag -DSSAO -DSURFEL_GI)
 
 add_shader(light.vert                lighting/light.vert)
 add_shader(light.frag                lighting/light.frag)
@@ -285,6 +286,7 @@ add_shader(hiz_pot.comp              hiz/hiz_pot.comp)
 
 # RayQuery
 add_shader(rt_dbg.frag               lighting/rt_dbg/rt_dbg.frag -DRAY_QUERY -DRAY_QUERY_AT)
+add_shader(hash_dbg.frag             lighting/rt_dbg/hash_dbg.frag)
 
 # Global illumination
 add_shader(probe_dbg.vert            lighting/rt/probe_dbg.vert)
@@ -305,6 +307,25 @@ add_shader(probe_lighting.comp       lighting/rt/probe_lighting.comp)
 
 add_shader(probe_ambient.vert        triangle.vert)
 add_shader(probe_ambient.frag        lighting/rt/probe_ambient.frag)
+
+# Surfels
+add_shader(surf_dbg.vert             lighting/surfels/surf_dbg.vert)
+add_shader(surf_dbg.frag             lighting/surfels/surf_dbg.frag)
+
+add_shader(surf_update.comp          lighting/surfels/surf_update.comp)
+add_shader(surf_culling.comp         lighting/surfels/surf_culling.comp)
+add_shader(surf_decimate.comp        lighting/surfels/surf_decimate.comp)
+add_shader(surf_compact.comp         lighting/surfels/surf_compact.comp)
+
+add_shader(surf_alloc.comp           lighting/surfels/surf_alloc.comp)
+add_shader(surf_apply.comp           lighting/surfels/surf_apply.comp)
+
+add_shader(surf_bin_clear.comp       lighting/surfels/surf_bin_clear.comp)
+add_shader(surf_bin_alloc.comp       lighting/surfels/surf_bin_alloc.comp)
+add_shader(surf_bin_pass.comp        lighting/surfels/surf_bin_pass.comp)
+add_shader(surf_bin_sort.comp        lighting/surfels/surf_bin_sort.comp)
+
+add_shader(surf_pathtrace.comp       lighting/surfels/surf_pathtrace.comp)
 
 # Pathtracing
 add_shader(pathtrace.frag            lighting/pt/pathtrace.frag -DRAY_QUERY -DRAY_QUERY_AT)
