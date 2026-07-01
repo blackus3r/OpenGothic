@@ -367,7 +367,7 @@ struct DynamicWorld::NpcBodyList final {
     const auto  dir  = bpos - apos;
 
     auto dlen = dir.length();
-    auto ndir = Tempest::Vec3::normalize(dir);
+    auto ndir = dlen==0 ? Tempest::Vec3(1,0,0) : Tempest::Vec3::normalize(dir);
     const float rA = a.ellipsoidRadius( ndir, acos, asin);
     const float rB = b.ellipsoidRadius(-ndir, bcos, bsin);
 

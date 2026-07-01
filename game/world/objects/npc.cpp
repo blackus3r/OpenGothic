@@ -513,7 +513,7 @@ bool Npc::resetPositionToTA() {
     }
   setPosition (at->position() );
   setDirection(at->direction());
-  owner.script().fixNpcPosition(*this,0,0);
+  owner.script().fixNpcPosition(*this,0,100);
 
   if(!isDead) {
     attachToPoint(at);

@@ -765,6 +765,11 @@ void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
   auto& dyn  = *world().physic();
   auto  pos0 = npc.position();
 
+  if(!npc.hasCollision()) {
+    npc.updateTransform();
+    return;
+    }
+
   for(int r = 0; r<=800; r+=20) {
     for(int ang = 0; ang<360; ang+=30) {
       float a = float((float(ang)+angle0)*M_PI/180.0);
@@ -1986,7 +1991,7 @@ void GameScript::wld_insertnpc(int npcInstance, std::string_view spawnpoint) {
 
   auto npc = world().addNpc(size_t(npcInstance),spawnpoint);
   if(npc!=nullptr)
-    fixNpcPosition(*npc,0,0);
+    fixNpcPosition(*npc,0,150);
   }
 
 void GameScript::wld_removenpc(int npcInstance) {
