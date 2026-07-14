@@ -701,6 +701,8 @@ void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y
   }
 
 void MainWindow::drawMsg(Tempest::Painter& p) {
+  if(barBack==nullptr)
+    return;
   const float scale   = Gothic::interfaceScale(this);
   const float destW   = 200.f*scale*float(std::min(w(),800))/800.f;
   const float k       = float(destW)/float(std::max(barBack->w(),1));
