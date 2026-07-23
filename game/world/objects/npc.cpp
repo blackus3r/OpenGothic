@@ -4672,7 +4672,10 @@ bool Npc::canRayHitPoint(const Tempest::Vec3 self, const Tempest::Vec3 pos, floa
     return !w->ray(self, pos).hasCol;
     }
 
-  float dx  = self.x-pos.x, dz=self.z-pos.z;
+  // measure view cone from npc position, not from head bone: in melee the head of an
+  // attacking monster dives into the target and the direction becomes numerical noise.
+  // L'Hiver anti-exploit scripts read this as "player ran away" and heal the monster
+  float dx  = x-pos.x, dz = z-pos.z;
   float dir = angleDir(dx,dz);
   float da  = float(M_PI)*(visual.viewDirection()-dir)/180.f;
   auto  ca  = angOverride > 0 ? std::cos(angOverride*M_PI/180.0) : ref;
