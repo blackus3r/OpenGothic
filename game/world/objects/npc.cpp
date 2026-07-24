@@ -332,6 +332,13 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 void Npc::postValidate() {
   if(currentInteract!=nullptr && !currentInteract->isAttached(*this))
     currentInteract = nullptr;
+  if(currentInteract!=nullptr && !currentInteract->isLadder()) {
+    // saves from before the mobsi-grounding fix stored the npc floating above ground;
+    // re-ground on load so a loaded attachment matches a fresh one
+    auto ray = owner.physic()->landscapeRay(Vec3(x,y+100,z), Vec3(x,y-500,z));
+    if(ray.hasCol)
+      setPosition(x,ray.v.y,z);
+    }
   }
 
 void Npc::saveAiState(Serialize& fout) const {

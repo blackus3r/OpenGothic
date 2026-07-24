@@ -878,8 +878,15 @@ bool Interactive::isAttached(const Npc& to) {
 
 bool Interactive::setPos(Npc &npc,const Tempest::Vec3& pos) {
   auto prev = npc.position();
-  npc.setPosition(pos);
-  world.script().fixNpcPosition(npc,0,0);
+  auto p    = pos;
+  if(!isLadder()) {
+    // ground to terrain, ignoring the mobsi's own mesh (bench/log/etc), which the
+    // attachment node sits on top of - otherwise the npc lands on the object and floats
+    auto ray = world.physic()->landscapeRay(p+Tempest::Vec3(0,100,0), p+Tempest::Vec3(0,-500,0));
+    if(ray.hasCol)
+      p.y = ray.v.y;
+    }
+  npc.setPosition(p);
   if(npc.hasCollision()) {
     npc.setPosition(prev);
     return false;
@@ -902,20 +909,14 @@ Tempest::Vec3 Interactive::nodePosition(const Npc* npc, const Interactive::Pos &
   float x = p.at(3,0);
   float y = p.at(3,1);
   float z = p.at(3,2);
-  return Tempest::Vec3(x,y,z);
-  //NOTE: no need in 'ground rays' - distance to point check allows extra distance on Y
-#if 0
-  if(!groundPos)
-    return Tempest::Vec3(x,y,z);
 
-  auto pos = Tempest::Vec3(x,y,z);
-  auto ray = world.physic()->ray(pos, pos+Tempest::Vec3(0,MOBSI_SEARCH_DISTANCE,0));
-  if(ray.hasCol) {
-    // project position on landscape
-    pos = ray.v;
+  if(!isLadder()) {
+    auto ray = world.physic()->landscapeRay(Tempest::Vec3(x,y+100,z), Tempest::Vec3(x,y-500,z));
+    if(ray.hasCol)
+      y = ray.v.y;
     }
-  return pos;
-#endif
+
+  return Tempest::Vec3(x,y,z);
   }
 
 Tempest::Matrix4x4 Interactive::nodeTranform(const Npc* npc, const Pos& to) const {

@@ -750,6 +750,59 @@ DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const T
   return ret;
   }
 
+DynamicWorld::RayLandResult DynamicWorld::landscapeRay(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+  struct CallBack:btCollisionWorld::ClosestRayResultCallback {
+    using ClosestRayResultCallback::ClosestRayResultCallback;
+    zenkit::MaterialGroup matId  = zenkit::MaterialGroup::UNDEFINED;
+    const char*           sector = nullptr;
+
+    bool needsCollision(btBroadphaseProxy* proxy0) const override {
+      auto obj=reinterpret_cast<btCollisionObject*>(proxy0->m_clientObject);
+      // ground rays must ignore vob objects (mobsi meshes), only static landscape counts
+      if(obj->getUserIndex()==C_Landscape)
+        return ClosestRayResultCallback::needsCollision(proxy0);
+      return false;
+      }
+
+    btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult, bool normalInWorldSpace) override {
+      auto shape = rayResult.m_collisionObject->getCollisionShape();
+      if(shape!=nullptr) {
+        auto s  = reinterpret_cast<const btMultimaterialTriangleMeshShape*>(shape);
+        auto mt = reinterpret_cast<const PhysicVbo*>(s->getMeshInterface());
+
+        size_t id = size_t(rayResult.m_localShapeInfo->m_shapePart);
+        matId  = mt->materialId(id);
+        sector = mt->sectorName(id);
+        }
+      return ClosestRayResultCallback::addSingleResult(rayResult,normalInWorldSpace);
+      }
+    };
+
+  CallBack callback{CollisionWorld::toMeters(from), CollisionWorld::toMeters(to)};
+  callback.m_flags = btTriangleRaycastCallback::kF_KeepUnflippedNormal | btTriangleRaycastCallback::kF_FilterBackfaces;
+
+  world->rayCast(from,to,callback);
+
+  Tempest::Vec3 hitPos = to, hitNorm;
+  if(callback.hasHit()){
+    hitPos = CollisionWorld::toCentimeters(callback.m_hitPointWorld);
+    hitNorm.x = callback.m_hitNormalWorld.x();
+    hitNorm.y = callback.m_hitNormalWorld.y();
+    hitNorm.z = callback.m_hitNormalWorld.z();
+    } else {
+    hitPos.y = -std::numeric_limits<float>::infinity();
+    }
+
+  RayLandResult ret;
+  ret.v           = hitPos;
+  ret.n           = hitNorm;
+  ret.mat         = callback.matId;
+  ret.hasCol      = callback.hasHit();
+  ret.hitFraction = callback.m_closestHitFraction;
+  ret.sector      = callback.sector;
+  return ret;
+  }
+
 DynamicWorld::RayQueryResult DynamicWorld::rayNpc(const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const {
   RayQueryResult r;
   static_cast<RayLandResult&>(r) = ray(from,to);
