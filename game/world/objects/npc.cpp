@@ -332,6 +332,14 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 void Npc::postValidate() {
   if(currentInteract!=nullptr && !currentInteract->isAttached(*this))
     currentInteract = nullptr;
+  if(currentInteract!=nullptr &&
+     !currentInteract->isLadder() &&
+     !currentInteract->isDoor()) {
+    // Keep fresh and loaded attachments on the same support while ignoring only the
+    // MOBSI being used. Other VOBs remain valid floors.
+    setPosition(currentInteract->groundedPosition(position()));
+    owner.script().fixNpcPosition(*this,0,0,currentInteract);
+    }
   }
 
 void Npc::saveAiState(Serialize& fout) const {

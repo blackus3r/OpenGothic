@@ -877,14 +877,28 @@ bool Interactive::isAttached(const Npc& to) {
   }
 
 bool Interactive::setPos(Npc &npc,const Tempest::Vec3& pos) {
-  auto prev = npc.position();
-  npc.setPosition(pos);
-  world.script().fixNpcPosition(npc,0,0);
+  auto prev       = npc.position();
+  auto p          = groundedPosition(pos);
+  auto* rayExcept = (!isLadder() && !isDoor()) ? this : nullptr;
+  npc.setPosition(p);
+  world.script().fixNpcPosition(npc,0,0,rayExcept);
   if(npc.hasCollision()) {
     npc.setPosition(prev);
     return false;
     }
   return true;
+  }
+
+Tempest::Vec3 Interactive::groundedPosition(const Tempest::Vec3& pos) const {
+  if(isLadder() || isDoor())
+    return pos;
+
+  auto p   = pos;
+  auto ray = world.physic()->ray(p+Tempest::Vec3(0,100,0),
+                                 p+Tempest::Vec3(0,-500,0),this);
+  if(ray.hasCol)
+    p.y = ray.v.y;
+  return p;
   }
 
 void Interactive::setDir(Npc &npc, const Tempest::Matrix4x4 &mat) {
@@ -903,19 +917,6 @@ Tempest::Vec3 Interactive::nodePosition(const Npc* npc, const Interactive::Pos &
   float y = p.at(3,1);
   float z = p.at(3,2);
   return Tempest::Vec3(x,y,z);
-  //NOTE: no need in 'ground rays' - distance to point check allows extra distance on Y
-#if 0
-  if(!groundPos)
-    return Tempest::Vec3(x,y,z);
-
-  auto pos = Tempest::Vec3(x,y,z);
-  auto ray = world.physic()->ray(pos, pos+Tempest::Vec3(0,MOBSI_SEARCH_DISTANCE,0));
-  if(ray.hasCol) {
-    // project position on landscape
-    pos = ray.v;
-    }
-  return pos;
-#endif
   }
 
 Tempest::Matrix4x4 Interactive::nodeTranform(const Npc* npc, const Pos& to) const {

@@ -247,7 +247,8 @@ class DynamicWorld final {
     RayWaterResult waterRay     (const Tempest::Vec3& from, float stepHeight) const;
     RayCamResult   cameraRay    (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 
-    RayLandResult  ray          (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
+    RayLandResult  ray          (const Tempest::Vec3& from, const Tempest::Vec3& to,
+                                 const Interactive* except=nullptr) const;
     RayQueryResult rayNpc       (const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const;
     float          soundOclusion(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 

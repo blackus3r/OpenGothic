@@ -23,6 +23,7 @@ class World;
 class DirectMemory;
 class Npc;
 class Item;
+class Interactive;
 class VisualFx;
 class ParticleFx;
 class Serialize;
@@ -169,7 +170,8 @@ class GameScript final {
     BodyState schemeToBodystate(std::string_view sc);
 
     void      onWldItemRemoved(const Item& itm);
-    void      fixNpcPosition(Npc& npc, float angle0, float distBias);
+    void      fixNpcPosition(Npc& npc, float angle0, float distBias,
+                             const Interactive* rayExcept=nullptr);
 
     void      eventPlayAni(Npc& npc, std::string_view ani);
 

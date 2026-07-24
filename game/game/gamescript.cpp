@@ -761,7 +761,8 @@ void GameScript::saveSym(Serialize &fout, zenkit::DaedalusSymbol& i) {
   fout.write(uint32_t(zenkit::DaedalusDataType::VOID));
   }
 
-void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
+void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias,
+                                const Interactive* rayExcept) {
   auto& dyn  = *world().physic();
   auto  pos0 = npc.position();
 
@@ -776,7 +777,7 @@ void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
       float d = float(r)+distBias;
       auto  p = pos0+Vec3(std::cos(a)*d, 0, std::sin(a)*d);
 
-      auto ray = dyn.ray(p+Vec3(0,100,0), p+Vec3(0,-1000,0));
+      auto ray = dyn.ray(p+Vec3(0,100,0), p+Vec3(0,-1000,0),rayExcept);
       if(!ray.hasCol)
         continue;
       p.y = ray.v.y;

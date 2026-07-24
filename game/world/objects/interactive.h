@@ -75,6 +75,7 @@ class Interactive : public Vob {
 
     bool                canSeeNpc(const Npc &npc, bool freeLos) const;
     Tempest::Vec3       nearestPoint(const Npc& to) const;
+    Tempest::Vec3       groundedPosition(const Tempest::Vec3& pos) const;
 
     bool                isAvailable() const;
     bool                isStaticState() const;

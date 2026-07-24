@@ -686,16 +686,25 @@ DynamicWorld::RayCamResult DynamicWorld::cameraRay(const Tempest::Vec3& from, co
   return ret;
   }
 
-DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const Tempest::Vec3& to,
+                                             const Interactive* except) const {
   struct CallBack:btCollisionWorld::ClosestRayResultCallback {
-    using ClosestRayResultCallback::ClosestRayResultCallback;
     zenkit::MaterialGroup matId  = zenkit::MaterialGroup::UNDEFINED;
     const char*           sector = nullptr;
     Category              colCat = C_Null;
     Interactive*          vob    = nullptr;
+    const Interactive*    except = nullptr;
+
+    CallBack(const btVector3& from, const btVector3& to, const Interactive* except)
+      :ClosestRayResultCallback(from,to),except(except) {
+      }
 
     bool needsCollision(btBroadphaseProxy* proxy0) const override {
       auto obj=reinterpret_cast<btCollisionObject*>(proxy0->m_clientObject);
+      if(except!=nullptr &&
+         obj->getUserIndex()==C_Object &&
+         obj->getUserPointer()==except)
+        return false;
       if(obj->getUserIndex()==C_Landscape || obj->getUserIndex()==C_Object)
         return ClosestRayResultCallback::needsCollision(proxy0);
       return false;
@@ -719,7 +728,7 @@ DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const T
       }
     };
 
-  CallBack callback{CollisionWorld::toMeters(from), CollisionWorld::toMeters(to)};
+  CallBack callback{CollisionWorld::toMeters(from), CollisionWorld::toMeters(to),except};
   callback.m_flags = btTriangleRaycastCallback::kF_KeepUnflippedNormal | btTriangleRaycastCallback::kF_FilterBackfaces;
 
   world->rayCast(from,to,callback);
