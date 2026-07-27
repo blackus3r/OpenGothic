@@ -65,10 +65,6 @@ struct VideoSettings {
 vec3 gameTonemap(vec3 color, const VideoSettings s) {
   color *= s.mulExposure;
 
-  // Brightness & Contrast
-  color = max(vec3(0), color + vec3(s.brightness));
-  color = color * vec3(s.contrast);
-
   // Tonemapping
   color = acesTonemap(color);
 
@@ -76,7 +72,14 @@ vec3 gameTonemap(vec3 color, const VideoSettings s) {
   //color = srgbEncode(color);
   color = pow(color, vec3(s.gamma));
 
-  return color;
+  // Brightness and contrast belong in display space. Adding brightness to linear HDR before the
+  // tonemapper clamped each channel at zero, so a small negative value crushed the darkest
+  // channel far harder than the others, and a small positive one lifted every black into grey.
+  // A gain keeps black at black, and contrast pivots around mid grey so both ends stay put.
+  color = color * s.brightness;
+  color = (color - vec3(0.5)) * s.contrast + vec3(0.5);
+
+  return clamp(color, vec3(0.0), vec3(1.0));
   }
 
 #endif

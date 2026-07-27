@@ -727,9 +727,15 @@ void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, 
     };
 
   Push p;
-  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
-  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
-  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+  // Display-space controls. The middle of each slider is the reference look, and the range is
+  // symmetric around it, so none of them has to sit at its limit to get a usable image.
+  const float b = settings.zVidBrightness - 0.5f;
+  const float c = settings.zVidContrast   - 0.5f;
+  const float g = settings.zVidGamma      - 0.5f;
+
+  p.brightness = std::max(1.50f + b*1.20f, 0.01f);
+  p.contrast   = std::max(1.10f + c*0.80f, 0.01f);
+  p.gamma      = p.gamma/std::max(1.23f + g*0.90f, 0.01f);
 
   static float mul = 0.f;
   if(mul>0)
@@ -778,9 +784,15 @@ void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::
     };
 
   Push p;
-  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
-  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
-  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+  // Display-space controls. The middle of each slider is the reference look, and the range is
+  // symmetric around it, so none of them has to sit at its limit to get a usable image.
+  const float b = settings.zVidBrightness - 0.5f;
+  const float c = settings.zVidContrast   - 0.5f;
+  const float g = settings.zVidGamma      - 0.5f;
+
+  p.brightness = std::max(1.50f + b*1.20f, 0.01f);
+  p.contrast   = std::max(1.10f + c*0.80f, 0.01f);
+  p.gamma      = p.gamma/std::max(1.23f + g*0.90f, 0.01f);
 
   static float mul = 0.f;
   if(mul>0)
