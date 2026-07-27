@@ -78,6 +78,18 @@ CommandLine::CommandLine(int argc, const char** argv) {
           }
         }
       }
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+    else if(arg=="-runtime-test") {
+      ++i;
+      if(i<argc)
+        testDef = argv[i];
+      }
+    else if(arg=="-runtime-test-output") {
+      ++i;
+      if(i<argc)
+        testOutput = argv[i];
+      }
+#endif
     else if(arg=="-w") {
       ++i;
       if(i<argc)

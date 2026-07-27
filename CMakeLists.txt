@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(Gothic2Notr LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(BUILD_SHARED_LIBS OFF)
+option(OPENGOTHIC_RUNTIME_TESTS "Build opt-in in-engine runtime regression tests" OFF)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
@@ -76,6 +77,14 @@ endif()
 file(GLOB_RECURSE OPENGOTHIC_SOURCES
     "game/*.h"
     "game/*.cpp")
+
+if(OPENGOTHIC_RUNTIME_TESTS)
+  list(APPEND OPENGOTHIC_SOURCES
+      "tests/runtime/engine/runtimetest.h"
+      "tests/runtime/engine/runtimetest.cpp")
+  target_compile_definitions(${PROJECT_NAME} PRIVATE OPENGOTHIC_RUNTIME_TESTS=1)
+  target_include_directories(${PROJECT_NAME} PRIVATE "tests/runtime/engine")
+endif()
 
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES} icon.rc)
 

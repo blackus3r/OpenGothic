@@ -21,6 +21,9 @@
 
 class Interactive;
 class WayPoint;
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+class RuntimeTest;
+#endif
 
 class Npc final {
   public:
@@ -420,6 +423,10 @@ class Npc final {
     void      runEffect  (Effect&& e);
 
   private:
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+    friend class RuntimeTest;
+#endif
+
     struct Routine final {
       gtime            start;
       gtime            end;

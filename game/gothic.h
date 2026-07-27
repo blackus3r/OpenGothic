@@ -24,6 +24,9 @@ class ParticlesDefinitions;
 class MusicDefinitions;
 class FightAi;
 class IniFile;
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+class RuntimeTest;
+#endif
 
 class Gothic final {
   public:
@@ -248,6 +251,9 @@ class Gothic final {
     std::unique_ptr<SoundDefinitions>       soundDef;
     std::unique_ptr<VisualFxDefinitions>    vfxDef;
     std::unique_ptr<ParticlesDefinitions>   particleDef;
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+    std::unique_ptr<RuntimeTest>             runtimeTest;
+#endif
     std::unique_ptr<MusicDefinitions>       music;
 
     std::mutex                              syncSnd;

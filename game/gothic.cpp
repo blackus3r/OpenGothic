@@ -24,6 +24,9 @@
 
 #include "commandline.h"
 #include "mainwindow.h"
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+#include "runtimetest.h"
+#endif
 
 using namespace Tempest;
 using namespace FileUtil;
@@ -241,6 +244,14 @@ Gothic::Gothic() {
 
   onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();
+
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+  if(!CommandLine::inst().runtimeTest().empty()) {
+    runtimeTest = std::make_unique<RuntimeTest>(*this,
+                                               CommandLine::inst().runtimeTest(),
+                                               CommandLine::inst().runtimeTestOutput());
+    }
+#endif
   }
 
 Gothic::~Gothic() {
@@ -604,8 +615,13 @@ void Gothic::tick(uint64_t dt) {
       }
     }
 
-  if(game)
+  if(game) {
     game->tick(dt);
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+    if(runtimeTest!=nullptr)
+      runtimeTest->tick(dt);
+#endif
+    }
   }
 
 void Gothic::updateAnimation(uint64_t dt) {
