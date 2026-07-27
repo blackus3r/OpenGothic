@@ -132,13 +132,16 @@ void CollisionWorld::touchAabbs() {
   aabbChanged++;
   }
 
-bool CollisionWorld::hasCollision(btRigidBody& it, Tempest::Vec3& normal, Interactive*& vob) {
+bool CollisionWorld::hasCollision(btRigidBody& it, Tempest::Vec3& normal,
+                                  Tempest::Vec3& contact, Interactive*& vob) {
   struct rCallBack : public btCollisionWorld::ContactResultCallback {
     int                 count = 0;
     Tempest::Vec3       norm  = {};
     float               dist  = 0; // collision depth
     btCollisionObject*  src   = nullptr;
     Interactive*        vob   = nullptr;
+    btVector3           contact = {};
+    bool                hasContact = false;
 
     explicit rCallBack(btCollisionObject* src):src(src){
       m_collisionFilterMask = btBroadphaseProxy::DefaultFilter | btBroadphaseProxy::StaticFilter;
@@ -161,7 +164,15 @@ bool CollisionWorld::hasCollision(btRigidBody& it, Tempest::Vec3& normal, Intera
       norm.y += p.m_normalWorldOnB.y();
       norm.z += p.m_normalWorldOnB.z();
       ++count;
-      auto obj = proxy1->getCollisionObject();
+      const auto obj0 = proxy0->getCollisionObject();
+      const auto obj1 = proxy1->getCollisionObject();
+      const bool srcIs0 = obj0==src;
+      auto obj = srcIs0 ? obj1 : obj0;
+      const auto pos = srcIs0 ? p.getPositionWorldOnB() : p.getPositionWorldOnA();
+      if(!hasContact || pos.y()>contact.y()) {
+        contact    = pos;
+        hasContact = true;
+        }
       if(obj->getUserIndex()==DynamicWorld::C_Object) {
         vob = reinterpret_cast<Interactive*>(obj->getUserPointer());
         }
@@ -176,6 +187,7 @@ bool CollisionWorld::hasCollision(btRigidBody& it, Tempest::Vec3& normal, Intera
 
   if(callback.count>0){
     normal = Tempest::Vec3::normalize(callback.norm);
+    contact = toCentimeters(callback.contact);
     vob    = callback.vob;
     }
   return callback.count>0;
@@ -342,7 +354,7 @@ void CollisionWorld::setItemHitCallback(std::function<void (Item&, zenkit::Mater
   }
 
 bool CollisionWorld::tick(float step, btRigidBody& body) {
-  Tempest::Vec3 norm;
+  Tempest::Vec3 norm, contact;
 
   btTransform prev = body.getWorldTransform();
   auto  trans = prev;
@@ -352,7 +364,7 @@ bool CollisionWorld::tick(float step, btRigidBody& body) {
   body.setWorldTransform(trans);
 
   Interactive* vob = nullptr;
-  if(hasCollision(body,norm,vob)) {
+  if(hasCollision(body,norm,contact,vob)) {
     body.setWorldTransform(prev);
     return false;
     }
@@ -363,4 +375,3 @@ bool CollisionWorld::tick(float step, btRigidBody& body) {
 void CollisionWorld::saveKinematicState(btScalar /*timeStep*/) {
   // assume no CF_KINEMATIC_OBJECT in this game
   }
-

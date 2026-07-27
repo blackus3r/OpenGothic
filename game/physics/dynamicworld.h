@@ -64,6 +64,7 @@ class DynamicWorld final {
     struct CollisionTest {
       Tempest::Vec3 partial = {};
       Tempest::Vec3 normal  = {};
+      Tempest::Vec3 contact = {};
       bool          preFall = false;
 
       Interactive*  vob     = nullptr;

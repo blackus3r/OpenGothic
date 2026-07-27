@@ -4435,12 +4435,18 @@ Npc::JumpStatus Npc::tryJump() {
   auto pos0 = physic.position();
 
   JumpStatus ret;
-  DynamicWorld::CollisionTest info;
-  if(!mvAlgo.isJumpUp() && physic.testMove(pos0+dp,info)) {
-    // jump forward
-    ret.anim   = Anim::Jump;
-    ret.noClimb = true;
-    return ret;
+  DynamicWorld::CollisionTest forwardInfo;
+  bool forwardTested = false;
+  bool forwardClear  = false;
+  if(!mvAlgo.isJumpUp()) {
+    forwardClear  = physic.testMove(pos0+dp,forwardInfo);
+    forwardTested = true;
+    if(forwardClear) {
+      // jump forward
+      ret.anim    = Anim::Jump;
+      ret.noClimb = true;
+      return ret;
+      }
     }
 
   auto  lnd   = owner.physic()->landRay(pos0 + dp + Vec3(0, jumpUp + jumpLow, 0));
@@ -4448,14 +4454,56 @@ Npc::JumpStatus Npc::tryJump() {
   auto  pos1  = Vec3(pos0.x,jumpY,pos0.z);
   auto  pos2  = pos1 + dp;
 
-  float dY    = jumpY - y;
+  float dY    = jumpY - pos0.y;
 
+  DynamicWorld::CollisionTest info;
   if(dY<=0.f ||
      !physic.testMove(pos2,pos1,info)) {
-    ret.anim    = Anim::JumpUp;
-    ret.height  = y + jumpUp;
-    ret.noClimb = true;
-    return ret;
+    // landRay is a single vertical ray and misses the top edge of thin obstacles like fences:
+    // it reports the ground behind them, so the climb looks flat and gets rejected. Recover the
+    // top at the actual static-geometry contact; NPCs, interactive VOBs and drops keep their
+    // existing non-climb behavior.
+    bool climb = false;
+    if(!forwardTested) {
+      forwardClear  = physic.testMove(pos0+dp,forwardInfo);
+      forwardTested = true;
+      }
+    const bool climbableObstacle = !forwardClear &&
+                                   forwardInfo.landCol &&
+                                   forwardInfo.npc==nullptr &&
+                                   forwardInfo.vob==nullptr;
+    const bool safeLanding = lnd.hasCol && lnd.v.y>=pos0.y-jumpLow;
+    if(climbableObstacle && safeLanding && jumpUp>0.f) {
+      constexpr float probeOffset[] = {0.f, 0.25f, 1.f};
+      const Vec3 dir = dp/len;
+      const float probeHeight = jumpUp+std::max(jumpLow,0.f);
+      float obstacleY = pos0.y;
+      bool  topFound  = false;
+      for(float off:probeOffset) {
+        auto p = forwardInfo.contact+dir*off;
+        p.y = pos0.y+probeHeight;
+        const auto top = owner.physic()->landRay(p,probeHeight);
+        if(top.hasCol && (!topFound || top.v.y>obstacleY)) {
+          obstacleY = top.v.y;
+          topFound  = true;
+          }
+        }
+
+      const float obstacleH = obstacleY-pos0.y;
+      if(topFound && obstacleH>0.f && obstacleH<=jumpUp) {
+        jumpY = obstacleY;
+        pos1  = Vec3(pos0.x,jumpY,pos0.z);
+        pos2  = pos1+dp;
+        dY    = obstacleH;
+        climb = true;
+        }
+      }
+    if(!climb) {
+      ret.anim    = Anim::JumpUp;
+      ret.height  = pos0.y+jumpUp;
+      ret.noClimb = true;
+      return ret;
+      }
     }
 
   if(!physic.testMove(pos1,pos0,info) ||
@@ -4469,7 +4517,7 @@ Npc::JumpStatus Npc::tryJump() {
   if(dY>=jumpUp || dY>=jumpMid) {
     // Jump to the edge, and then pull up. Height: 200-350cm
     ret.anim   = Anim::JumpUp;
-    ret.height = y + jumpUp;
+    ret.height = pos0.y+jumpUp;
     return ret;
     }
 

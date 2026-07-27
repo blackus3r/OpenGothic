@@ -1087,11 +1087,11 @@ std::string_view DynamicWorld::validateSectorName(std::string_view name) const {
 bool DynamicWorld::hasCollision(const NpcItem& it, CollisionTest& out) {
   bool ret = false;
 
-  out.normal = Tempest::Vec3();
+  out = CollisionTest();
   if(npcList->hasCollision(it,out.normal,out.npc,out.npcCol)){
     ret = true;
     }
-  if(world->hasCollision(*it.obj,out.normal,out.vob)) {
+  if(world->hasCollision(*it.obj,out.normal,out.contact,out.vob)) {
     out.landCol = true;
     ret = true;
     }

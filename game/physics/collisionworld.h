@@ -40,7 +40,8 @@ class CollisionWorld : public btDiscreteDynamicsWorld {
     void touchAabbs();
 
     bool hasCollision(const btCollisionObject &it, Tempest::Vec3& normal);
-    bool hasCollision(btRigidBody& it, Tempest::Vec3& normal, Interactive*& vob);
+    bool hasCollision(btRigidBody& it, Tempest::Vec3& normal,
+                      Tempest::Vec3& contact, Interactive*& vob);
 
     std::unique_ptr<CollisionBody> addCollisionBody(btCollisionShape& shape, const Tempest::Matrix4x4& tr, float friction);
     std::unique_ptr<DynamicBody>   addDynamicBody  (btCollisionShape& shape, const Tempest::Matrix4x4& tr, float friction, float mass);
@@ -88,4 +89,3 @@ class CollisionWorld : public btDiscreteDynamicsWorld {
 
     mutable uint32_t aabbChanged = 0;
   };
-
