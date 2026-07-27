@@ -61,6 +61,7 @@ class Interactive : public Vob {
 
     bool                isContainer() const;
     bool                isDoor() const;
+    bool                isDoorInteraction() const;
     bool                isTrueDoor(const Npc& npc) const;
     bool                isLadder() const;
     std::string_view    pickLockCode() const { return pickLockStr; }

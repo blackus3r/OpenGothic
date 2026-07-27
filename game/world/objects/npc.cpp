@@ -334,7 +334,7 @@ void Npc::postValidate() {
     currentInteract = nullptr;
   if(currentInteract!=nullptr &&
      !currentInteract->isLadder() &&
-     !currentInteract->isDoor()) {
+     !currentInteract->isDoorInteraction()) {
     // Keep fresh and loaded attachments on the same support while ignoring only the
     // MOBSI being used. Other VOBs remain valid floors.
     setPosition(currentInteract->groundedPosition(position()));

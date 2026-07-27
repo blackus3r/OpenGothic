@@ -13,6 +13,22 @@
 #include "utils/dbgpainter.h"
 #include "gothic.h"
 
+static bool compareNoCase(std::string_view a, std::string_view b) {
+  if(a.size()!=b.size())
+    return false;
+  for(size_t i=0; i<a.size(); ++i) {
+    char ca = a[i];
+    char cb = b[i];
+    if('a'<=ca && ca<='z')
+      ca = char((ca-'a')+'A');
+    if('a'<=cb && cb<='z')
+      cb = char((cb-'a')+'A');
+    if(ca!=cb)
+      return false;
+    }
+  return true;
+  }
+
 static Npc::Anim toNpcAnim(Interactive::Anim dir) {
   switch(dir) {
     case Interactive::Anim::In:        return Npc::Anim::InteractIn;
@@ -539,11 +555,19 @@ bool Interactive::isContainer() const {
   }
 
 bool Interactive::isDoor() const {
+  // Raw vob class only. Use isDoorInteraction() to decide door behavior.
   return vobType==zenkit::VirtualObjectType::oCMobDoor;
   }
 
+bool Interactive::isDoorInteraction() const {
+  // Some mods serialize unrelated MOBSIs (notably BEDHIGH) as oCMobDoor.
+  // The model scheme selects the interaction animations, so door-specific
+  // placement and collision behavior must require both signals.
+  return isDoor() && compareNoCase(schemeName(),"DOOR");
+  }
+
 bool Interactive::isTrueDoor(const Npc& npc) const {
-  if(!isDoor())
+  if(!isDoorInteraction())
     return false;
   for(int i=1; i<=stateNum; ++i)
     if(canQuitAtState(npc,i))
@@ -879,7 +903,7 @@ bool Interactive::isAttached(const Npc& to) {
 bool Interactive::setPos(Npc &npc,const Tempest::Vec3& pos) {
   auto prev       = npc.position();
   auto p          = groundedPosition(pos);
-  auto* rayExcept = (!isLadder() && !isDoor()) ? this : nullptr;
+  auto* rayExcept = (!isLadder() && !isDoorInteraction()) ? this : nullptr;
   npc.setPosition(p);
   world.script().fixNpcPosition(npc,0,0,rayExcept);
   if(npc.hasCollision()) {
@@ -890,7 +914,7 @@ bool Interactive::setPos(Npc &npc,const Tempest::Vec3& pos) {
   }
 
 Tempest::Vec3 Interactive::groundedPosition(const Tempest::Vec3& pos) const {
-  if(isLadder() || isDoor())
+  if(isLadder() || isDoorInteraction())
     return pos;
 
   auto p   = pos;
