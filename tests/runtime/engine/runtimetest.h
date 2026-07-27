@@ -26,6 +26,7 @@ class RuntimeTest final {
       Invalid,
       EnemyHeal,
       OrcBehind,
+      NpcSleepPlacement,
       };
 
     enum class Phase : uint8_t {
@@ -90,6 +91,37 @@ class RuntimeTest final {
       bool passed() const;
       };
 
+    struct SleepPlacementResult {
+      std::string instance;
+      bool        found                         = false;
+      bool        gotoBedStateSeen              = false;
+      bool        sleepStateSeen                = false;
+      bool        bedFixtureSeen                = false;
+      bool        bedAttached                   = false;
+      bool        liePoseSeen                   = false;
+      bool        locomotionSeen                = false;
+      bool        doorClassSeen                 = false;
+      bool        doorSemanticsSeen             = false;
+      uint32_t    samples                       = 0;
+      uint32_t    attachedSamples               = 0;
+      uint32_t    settledSamples                = 0;
+      uint32_t    baseFloatingSamples           = 0;
+      uint32_t    rootFloatingSamples           = 0;
+      uint32_t    rootBelowSupportSamples       = 0;
+      uint32_t    misplacedSamples              = 0;
+      uint32_t    horizontalLocomotionSamples   = 0;
+      float       maxTransitionRootAbove        = 0.f;
+      float       maxBaseAboveSupport           = 0.f;
+      float       maxRootAboveSupport           = 0.f;
+      float       maxRootBelowSupport           = 0.f;
+      float       maxBaseGroundOffset           = 0.f;
+      float       maxRootHorizontalOffset       = 0.f;
+      float       maxAttachmentGroundDelta      = 0.f;
+      float       minLocomotionUpright          = 1.f;
+
+      bool passed() const;
+      };
+
     struct QuarantinedNpc {
       Npc*          npc = nullptr;
       Tempest::Vec3 position;
@@ -99,6 +131,7 @@ class RuntimeTest final {
     void initialize(World& world, Npc& player);
     void tickEnemyHeal(uint64_t dt);
     void tickOrcBehind(uint64_t dt);
+    void tickNpcSleepPlacement(uint64_t dt);
 
     void beginHealCase();
     void sampleHealCase();
@@ -108,6 +141,10 @@ class RuntimeTest final {
     void prepareOrcCase();
     void sampleOrcCase();
     void finishOrcCase();
+
+    void sampleSleepPlacement();
+    void frameSleepCamera();
+    Npc* findNpc(std::string_view instance, std::string_view displayName) const;
 
     Npc* insertNpc(const std::vector<std::string_view>& candidates, std::string& instance);
     bool isNpcInstance(std::string_view name) const;
@@ -162,4 +199,7 @@ class RuntimeTest final {
     std::vector<HealResult> healResults;
     OrcResult               currentOrc;
     std::vector<OrcResult>  orcResults;
+    Npc*                    sleepSubject = nullptr;
+    SleepPlacementResult    sleepResult;
+    std::string             sleepLastSignature;
   };

@@ -113,10 +113,67 @@ def verify_orc(path: pathlib.Path, data: dict) -> None:
         fail(path, "controlled-see-only: no regular engine perception path ran")
 
 
+def verify_sleep_placement(path: pathlib.Path, data: dict) -> None:
+    case = data.get("case", {})
+    required = (
+        "found",
+        "goto_bed_state_seen",
+        "sleep_state_seen",
+        "bed_fixture_seen",
+        "bed_attached",
+        "lie_pose_seen",
+        "locomotion_seen",
+        "door_class_seen",
+    )
+    for key in required:
+        if not case.get(key):
+            fail(path, f"sleep placement did not observe {key}")
+    if case.get("door_semantics_seen"):
+        fail(path, "BEDHIGH was incorrectly treated as a door interaction")
+    if case.get("max_attachment_ground_delta_cm", 0) <= 50:
+        fail(path, "sleep placement did not exercise the elevated BEDHIGH attachment")
+    if case.get("attached_samples", 0) < 10:
+        fail(path, "sleep placement collected too few attached samples")
+    # The engine grounds the base once on attach and then leaves y alone while the entry
+    # animation keeps moving x/z, so the base is not expected to track the floor below its
+    # final spot. The regression is the NPC hovering over its support, which is checked
+    # directly against the bed volume.
+    if case.get("settled_samples", 0) < 10:
+        fail(path, "sleep placement collected too few settled samples")
+    if case.get("base_floating_samples") != 0:
+        fail(path, "sleep placement observed the NPC base above the bed")
+    if case.get("root_floating_samples") != 0:
+        fail(path, "sleep placement observed the NPC root above the bed")
+    if case.get("root_below_support_samples") != 0:
+        fail(path, "sleep placement observed the NPC root sunk below the bed")
+    if case.get("misplaced_samples") != 0:
+        fail(path, "sleep placement observed the NPC beside its support")
+    if case.get("horizontal_locomotion_samples") != 0:
+        fail(path, "sleep placement observed horizontal walking")
+    if case.get("max_base_above_support_cm", 999) > 0:
+        fail(path, "sleep placement base hovered over the bed")
+    if case.get("max_root_above_support_cm", 999) > 0:
+        fail(path, "sleep placement root hovered over the bed")
+    if case.get("max_root_horizontal_offset_cm", 999) > 20:
+        fail(path, "sleep placement root was horizontally outside the bed support")
+    if case.get("min_locomotion_upright_ratio", 0) < 0.45:
+        fail(path, "sleep placement locomotion pose was not upright")
+    if not case.get("passed"):
+        fail(path, "sleep placement case did not pass")
+
+
 def verify(path_text: str) -> None:
     path = pathlib.Path(path_text)
     with path.open(encoding="utf-8") as source:
         data = json.load(source)
+
+    test_name = data.get("test")
+    if test_name == "npc-sleep-placement":
+        verify_sleep_placement(path, data)
+        if not data.get("passed"):
+            fail(path, "runtime harness reported FAIL")
+        print(f"PASS {test_name}: {path}")
+        return
 
     fixture = data.get("fixture", {})
     if not fixture.get("clear"):
@@ -134,7 +191,6 @@ def verify(path_text: str) -> None:
     if not isinstance(fixture.get("quarantined_npcs"), int):
         fail(path, "fixture did not report its quarantined NPC count")
 
-    test_name = data.get("test")
     if test_name == "enemy-heal-combat":
         verify_enemy(path, data)
     elif test_name == "orc-behind-detection":

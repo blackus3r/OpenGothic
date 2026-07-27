@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <enemy-heal-combat|orc-behind-detection> <gothic-root> [artifact-dir]" >&2
+  echo "usage: $0 <enemy-heal-combat|orc-behind-detection|npc-sleep-placement> <gothic-root> [artifact-dir]" >&2
   exit 2
 }
 
@@ -14,7 +14,7 @@ fi
 test_name=$1
 game_root=$2
 case "$test_name" in
-  enemy-heal-combat|orc-behind-detection) ;;
+  enemy-heal-combat|orc-behind-detection|npc-sleep-placement) ;;
   *) usage ;;
 esac
 
@@ -24,13 +24,19 @@ artifact_dir=${3:-"$script_dir/artifacts/$(date +%F)-lhiver-uriziel"}
 build_dir=${OPENGOTHIC_RUNTIME_BUILD_DIR:-"$repo_root/build-runtime-tests"}
 binary=${OPENGOTHIC_BINARY:-"$build_dir/opengothic/Gothic2Notr"}
 mod_file=${OPENGOTHIC_MOD:-Buddygoths_LhiverUriziel.ini}
-save_slot=${OPENGOTHIC_SAVE:-5}
+default_save_slot=5
+if [[ $test_name == npc-sleep-placement ]]; then
+  default_save_slot=0
+fi
+save_slot=${OPENGOTHIC_SAVE:-$default_save_slot}
 record_video=${OPENGOTHIC_RECORD:-1}
 ready_timeout=${OPENGOTHIC_READY_TIMEOUT:-1200}
 record_duration=${OPENGOTHIC_RECORD_DURATION:-}
 if [[ -z $record_duration ]]; then
   if [[ $test_name == orc-behind-detection ]]; then
     record_duration=35
+  elif [[ $test_name == npc-sleep-placement ]]; then
+    record_duration=52
   else
     record_duration=50
   fi

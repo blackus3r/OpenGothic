@@ -12,6 +12,7 @@ class Skeleton;
 class Serialize;
 class AnimationSolver;
 class Npc;
+class RuntimeTest;
 
 class Pose final {
   public:
@@ -91,6 +92,10 @@ class Pose final {
     const Tempest::Matrix4x4* transform() const;
 
   private:
+#if defined(OPENGOTHIC_RUNTIME_TESTS)
+    friend class RuntimeTest;
+#endif
+
     enum SampleStatus : uint8_t {
       S_None  = 0,
       S_Old   = 1,

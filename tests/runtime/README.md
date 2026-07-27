@@ -6,7 +6,7 @@ machine-checkable JSON results.
 
 They intentionally do not claim equivalence with the original Gothic engine.
 They verify OpenGothic behavior against the installed L'Hiver Uriziel data and
-make the two reported regressions reproducible.
+make the reported regressions reproducible.
 
 ## Tests
 
@@ -29,6 +29,15 @@ make the two reported regressions reproducible.
   not enter FightAI in that run, the recording uses a deterministic
   visualization fallback labelled `FightAI=FIXTURE`; that fallback is not
   treated as evidence of detection.
+- `npc-sleep-placement`: follows Brian from the supplied L'Hiver save through
+  `ZS_GOTOBED`, walking, `ZS_SLEEP`, and the `BEDHIGH` attachment. The fixture
+  is important because L'Hiver serializes this bed as `oCMobDoor`; the test
+  therefore reproduces the class/scheme mismatch that bypassed the original
+  MOBSI grounding fix. It samples the final attachment for five seconds and
+  fails on an elevated NPC base, a root bone away from the mattress support, or
+  a horizontal locomotion pose. A scan of the installed L'Hiver worlds found
+  the same mismatch on all 199 `BEDHIGH` records, while all 57 actual
+  `oCMobDoor` fixtures use the `DOOR` scheme.
 
 Before inserting NPCs, the harness scans terrain for a flat, unobstructed 3D
 volume with no unrelated NPC inside OpenGothic's 30-metre active-NPC radius.
@@ -45,7 +54,7 @@ the maximum count, and requires it to remain zero throughout both cases.
 
 ## macOS runner
 
-Build and run against L'Hiver Uriziel save slot 5:
+Build and run against the supplied L'Hiver Uriziel saves:
 
 ```sh
 tests/runtime/run-lhiver-runtime-test-macos.sh \
@@ -54,6 +63,10 @@ tests/runtime/run-lhiver-runtime-test-macos.sh \
 
 tests/runtime/run-lhiver-runtime-test-macos.sh \
   orc-behind-detection \
+  "$HOME/Library/Application Support/OpenGothic"
+
+tests/runtime/run-lhiver-runtime-test-macos.sh \
+  npc-sleep-placement \
   "$HOME/Library/Application Support/OpenGothic"
 ```
 
@@ -69,10 +82,10 @@ Environment overrides:
 - `OPENGOTHIC_BINARY`
 - `OPENGOTHIC_RUNTIME_BUILD_DIR` (default `build-runtime-tests`)
 - `OPENGOTHIC_MOD` (default `Buddygoths_LhiverUriziel.ini`)
-- `OPENGOTHIC_SAVE` (default `5`)
+- `OPENGOTHIC_SAVE` (default `5`; `0` for `npc-sleep-placement`)
 - `OPENGOTHIC_RECORD` (`1` by default; set to `0` for JSON/log only)
-- `OPENGOTHIC_RECORD_DURATION` (defaults to 35 seconds for the Orc test and
-  50 seconds for the enemy-heal test)
+- `OPENGOTHIC_RECORD_DURATION` (defaults to 35 seconds for the Orc test,
+  50 seconds for the enemy-heal test, and 52 seconds for the sleep test)
 - `OPENGOTHIC_BUILD_JOBS` (default `8`)
 - `OPENGOTHIC_READY_TIMEOUT` (default `1200` seconds, including first-run
   Metal shader compilation)

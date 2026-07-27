@@ -18,7 +18,9 @@
 #include "graphics/mesh/skeleton.h"
 #include "marvin.h"
 #include "resources.h"
+#include "world/objects/interactive.h"
 #include "world/objects/npc.h"
+#include "world/waypoint.h"
 #include "world/world.h"
 
 using namespace Tempest;
@@ -32,6 +34,8 @@ constexpr uint32_t HealSampleCount    = 8;
 constexpr uint64_t OrcWarmupDuration  = 3000;
 constexpr uint64_t OrcObserveDuration = 7000;
 constexpr uint64_t OrcNaturalObservationDuration = 1500;
+constexpr uint64_t SleepObserveDuration = 45000;
+constexpr uint64_t SleepSampleInterval  = 100;
 constexpr uint64_t ResultDuration     = 1800;
 constexpr uint64_t StatusRefresh      = 1100;
 constexpr float    MeleeDistance      = 150.f;
@@ -89,12 +93,25 @@ bool RuntimeTest::OrcResult::passed() const {
          enginePerceptionObserved && selectorAcquiredPlayer && turned;
   }
 
+bool RuntimeTest::SleepPlacementResult::passed() const {
+  return found && gotoBedStateSeen && sleepStateSeen && bedFixtureSeen &&
+         bedAttached && liePoseSeen && locomotionSeen && doorClassSeen &&
+         !doorSemanticsSeen &&
+         maxAttachmentGroundDelta>50.f && samples>0 && attachedSamples>=10 &&
+         settledSamples>=10 &&
+         baseFloatingSamples==0 && rootFloatingSamples==0 &&
+         rootBelowSupportSamples==0 && misplacedSamples==0 &&
+         horizontalLocomotionSamples==0;
+  }
+
 RuntimeTest::RuntimeTest(Gothic& owner, std::string_view name, std::string_view output)
   :owner(owner), marvin(std::make_unique<Marvin>()), testName(name), outputPath(output) {
   if(name=="enemy-heal-combat")
     mode = Mode::EnemyHeal;
   else if(name=="orc-behind-detection")
     mode = Mode::OrcBehind;
+  else if(name=="npc-sleep-placement")
+    mode = Mode::NpcSleepPlacement;
 
   if(outputPath.empty())
     outputPath = std::string(name) + ".json";
@@ -126,6 +143,9 @@ void RuntimeTest::tick(uint64_t dt) {
     case Mode::OrcBehind:
       tickOrcBehind(dt);
       break;
+    case Mode::NpcSleepPlacement:
+      tickNpcSleepPlacement(dt);
+      break;
     case Mode::Invalid:
       if(phase!=Phase::Done) {
         Log::e("[RUNTIME_TEST] unknown test: ",testName);
@@ -137,25 +157,57 @@ void RuntimeTest::tick(uint64_t dt) {
 
 void RuntimeTest::initialize(World& activeWorld, Npc& activePlayer) {
   removeSubject();
+  if(mode==Mode::NpcSleepPlacement && player!=nullptr)
+    player->physic.setEnable(true);
   world       = &activeWorld;
   player      = &activePlayer;
   initialized = true;
   caseIndex   = 0;
   healResults.clear();
   orcResults.clear();
+  sleepSubject = nullptr;
+  sleepResult = SleepPlacementResult();
+  sleepLastSignature.clear();
   resultPass  = false;
   fixtureQuarantinedNpcCount = 0;
 
   initialAnchor = player->position();
+  anchor = initialAnchor;
+  if(!owner.isGodMode()) {
+    const bool enabled = marvin->exec("cheat god");
+    Log::e("[RUNTIME_TEST] marvin command `cheat god`: ",enabled ? "accepted" : "rejected");
+    }
+
+  if(mode==Mode::NpcSleepPlacement) {
+    // The detached test camera does not need a physical player body. Keeping it disabled
+    // prevents the save-specific player position from blocking Brian's route to the bed.
+    player->physic.setEnable(false);
+    sleepSubject = findNpc("VLK_457_BRIAN","Brian");
+    sleepResult.found = sleepSubject!=nullptr;
+    if(sleepSubject!=nullptr) {
+      if(const auto* symbol = world->script().findSymbol(sleepSubject->handle().symbol_index()))
+        sleepResult.instance = symbol->name();
+      frameSleepCamera();
+      }
+    fixtureClear = sleepResult.found;
+    fixtureScore = sleepResult.found ? 1 : 0;
+    fixtureScoreMax = 1;
+    fixtureNpcCount = 0;
+    fixtureNpcClearance = sleepResult.found ?
+                          length(sleepSubject->position()-player->position()) : 0.f;
+    enter(Phase::Intro);
+    Log::e("[RUNTIME_TEST] world-ready name=",activeWorld.name(),
+           " player=(",anchor.x,",",anchor.y,",",anchor.z,")",
+           " sleepSubject=",sleepResult.instance,
+           " god=",boolText(owner.isGodMode()));
+    return;
+    }
+
   const float angle = player->rotationRad();
   fixtureClear = chooseClearFixture(initialAnchor,angle);
   if(fixtureClear)
     quarantineNearbyNpcs();
 
-  if(!owner.isGodMode()) {
-    const bool enabled = marvin->exec("cheat god");
-    Log::e("[RUNTIME_TEST] marvin command `cheat god`: ",enabled ? "accepted" : "rejected");
-    }
   player->setPosition(anchor);
   player->setDirection(forward);
   player->setTarget(nullptr);
@@ -596,6 +648,219 @@ void RuntimeTest::finishOrcCase() {
   finish();
   }
 
+void RuntimeTest::tickNpcSleepPlacement(uint64_t) {
+  switch(phase) {
+    case Phase::Intro:
+      if(phaseTime>=IntroDuration)
+        enter(Phase::Observe);
+      break;
+    case Phase::Warmup:
+      break;
+    case Phase::Observe:
+      if(nextAction<=phaseTime) {
+        sampleSleepPlacement();
+        nextAction = phaseTime+SleepSampleInterval;
+        }
+      if(sleepResult.attachedSamples>=50 || phaseTime>=SleepObserveDuration)
+        enter(Phase::Result);
+      break;
+    case Phase::Result:
+      if(phaseTime>=ResultDuration)
+        finish();
+      break;
+    case Phase::Done:
+      if(phaseTime>=ResultDuration)
+        SystemApi::exit();
+      break;
+    }
+  }
+
+void RuntimeTest::sampleSleepPlacement() {
+  if(sleepSubject==nullptr)
+    return;
+
+  ++sleepResult.samples;
+  frameSleepCamera();
+
+  const auto* stateSymbol = world->script().findSymbol(sleepSubject->aiState.funcIni.ptr);
+  const std::string_view state = stateSymbol!=nullptr ? stateSymbol->name() : std::string_view();
+  sleepResult.gotoBedStateSeen |= state=="ZS_GOTOBED";
+  sleepResult.sleepStateSeen   |= state=="ZS_SLEEP";
+
+  std::string animations;
+  bool locomotion = false;
+  bool transitionAnim = false;
+  for(const auto& layer:sleepSubject->visual.pose().lay) {
+    if(layer.seq==nullptr)
+      continue;
+    if(!animations.empty())
+      animations += "+";
+    animations += layer.seq->name;
+    const auto name = std::string_view(layer.seq->name);
+    transitionAnim |= name.rfind("T_",0)==0;
+    locomotion |= layer.seq->animCls==Animation::Loop &&
+                  (name.find("WALK")!=std::string_view::npos ||
+                   name.find("RUN") !=std::string_view::npos);
+    }
+
+  Vec3 root = {};
+  sleepSubject->visual.pose().rootBone().project(root);
+  const Vec3 head = sleepSubject->mapHeadBone();
+  const Vec3 rootToHead = head-root;
+  const float rootHeadLength = length(rootToHead);
+  const float upright = rootHeadLength>0.001f ? rootToHead.y/rootHeadLength : 1.f;
+  if(locomotion) {
+    sleepResult.locomotionSeen = true;
+    sleepResult.minLocomotionUpright =
+        std::min(sleepResult.minLocomotionUpright,upright);
+    if(upright<0.45f)
+      ++sleepResult.horizontalLocomotionSamples;
+    }
+
+  auto* interaction = sleepSubject->interactive();
+  auto* bed = interaction;
+  if(bed==nullptr || bed->schemeName()!="BEDHIGH")
+    bed = world->availableMob(*sleepSubject,"BEDHIGH");
+  if(bed!=nullptr && bed->schemeName()=="BEDHIGH") {
+    sleepResult.bedFixtureSeen = true;
+    sleepResult.doorClassSeen |= bed->isDoor();
+    sleepResult.doorSemanticsSeen |= bed->isDoorInteraction();
+    if(interaction!=bed) {
+      const Vec3 attachment = bed->nearestPoint(*sleepSubject);
+      const Vec3 grounded = bed->groundedPosition(attachment);
+      sleepResult.maxAttachmentGroundDelta =
+          std::max(sleepResult.maxAttachmentGroundDelta,
+                   std::abs(attachment.y-grounded.y));
+      }
+    }
+
+  float baseGroundOffset = 0.f;
+  float baseAboveSupport = 0.f;
+  float rootAboveSupport = 0.f;
+  float rootBelowSupport = 0.f;
+  float rootHorizontalOffset = 0.f;
+  bool attachedBed = false;
+  if(interaction!=nullptr && interaction->schemeName()=="BEDHIGH") {
+    attachedBed = true;
+    sleepResult.bedAttached = true;
+    sleepResult.liePoseSeen |= sleepSubject->bodyStateMasked()==BS_LIE;
+    ++sleepResult.attachedSamples;
+
+    // The engine grounds the base once in Interactive::setPos and then MoveAlgo::tick returns
+    // early for MOBSI, so y stays fixed while the entry animation still moves x/z. Measuring the
+    // base against the floor below its final spot would therefore assert behavior the engine
+    // never implements. The bug this test guards is the NPC hovering over its support, so both
+    // base and root are measured against the bed volume instead.
+    const auto* bounds = interaction->bBox();
+    const Vec3 grounded = interaction->groundedPosition(sleepSubject->position());
+    baseGroundOffset = std::abs(sleepSubject->position().y-grounded.y);
+    baseAboveSupport = std::max(sleepSubject->position().y-bounds[1].y,0.f);
+    rootAboveSupport = std::max(root.y-bounds[1].y,0.f);
+    rootBelowSupport = std::max(bounds[0].y-root.y,0.f);
+    rootHorizontalOffset =
+        std::max({bounds[0].x-root.x,root.x-bounds[1].x,
+                  bounds[0].z-root.z,root.z-bounds[1].z,0.f});
+    sleepResult.maxBaseGroundOffset =
+        std::max(sleepResult.maxBaseGroundOffset,baseGroundOffset);
+    sleepResult.maxRootHorizontalOffset =
+        std::max(sleepResult.maxRootHorizontalOffset,rootHorizontalOffset);
+    // Entry animations legitimately swing the body over the mattress before it settles, so the
+    // hover figures only describe the looping sleep pose. The transition peak is kept separate.
+    if(transitionAnim) {
+      sleepResult.maxTransitionRootAbove =
+          std::max(sleepResult.maxTransitionRootAbove,rootAboveSupport);
+      } else {
+      ++sleepResult.settledSamples;
+      sleepResult.maxBaseAboveSupport =
+          std::max(sleepResult.maxBaseAboveSupport,baseAboveSupport);
+      sleepResult.maxRootAboveSupport =
+          std::max(sleepResult.maxRootAboveSupport,rootAboveSupport);
+      sleepResult.maxRootBelowSupport =
+          std::max(sleepResult.maxRootBelowSupport,rootBelowSupport);
+      if(baseAboveSupport>0.f)
+        ++sleepResult.baseFloatingSamples;
+      if(rootAboveSupport>0.f)
+        ++sleepResult.rootFloatingSamples;
+      if(rootBelowSupport>0.f)
+        ++sleepResult.rootBelowSupportSamples;
+      }
+    if(rootHorizontalOffset>20.f)
+      ++sleepResult.misplacedSamples;
+    }
+
+  std::ostringstream signature;
+  signature << state << "|" << animations << "|"
+            << (interaction!=nullptr ? interaction->schemeName() : std::string_view());
+  if(signature.str()!=sleepLastSignature || sleepResult.samples%10==0 ||
+     (locomotion && upright<0.45f) ||
+     (attachedBed && (baseAboveSupport>0.f || rootAboveSupport>0.f ||
+                      rootBelowSupport>0.f || rootHorizontalOffset>20.f))) {
+    // Tempest::Log truncates at 256 characters, so the geometry is reported on its own line.
+    Log::e("[RUNTIME_TEST] sleep sample n=",sleepResult.samples,
+           " state=",state,
+           " animation=",animations,
+           " bodyState=",int32_t(sleepSubject->bodyStateMasked()),
+           " interaction=",interaction!=nullptr ? interaction->schemeName() : std::string_view(),
+           " position=(",sleepSubject->position().x,",",sleepSubject->position().y,",",
+           sleepSubject->position().z,")");
+    Log::e("[RUNTIME_TEST] sleep geom n=",sleepResult.samples,
+           " baseAboveSupport=",baseAboveSupport,
+           " rootAboveSupport=",rootAboveSupport,
+           " rootBelowSupport=",rootBelowSupport,
+           " rootHorizontal=",rootHorizontalOffset,
+           " baseGroundOffset=",baseGroundOffset,
+           " upright=",upright);
+    sleepLastSignature = signature.str();
+    }
+  }
+
+void RuntimeTest::frameSleepCamera() {
+  auto* camera = owner.camera();
+  if(camera==nullptr || sleepSubject==nullptr)
+    return;
+
+  const float angle = sleepSubject->rotationRad();
+  const Vec3 direction = {std::cos(angle),0.f,std::sin(angle)};
+  const Vec3 side = {-direction.z,0.f,direction.x};
+  const Vec3 target = sleepSubject->position() + Vec3(0.f,100.f,0.f);
+
+  // A bedroom is smaller than the framing offset, so the unclamped viewpoint ends up outside
+  // the building and records a wall. Pull in until the subject is actually visible.
+  Vec3 origin = target;
+  for(float scale:{1.f, 0.7f, 0.5f, 0.35f, 0.25f}) {
+    const Vec3 candidate = sleepSubject->position() - direction*(220.f*scale) +
+                           side*(300.f*scale) + Vec3(0.f,60.f+130.f*scale,0.f);
+    if(!world->physic()->ray(target,candidate).hasCol) {
+      origin = candidate;
+      break;
+      }
+    }
+  const Vec3 delta = target-origin;
+  const float horizontal = Vec2(delta.x,delta.z).length();
+  const float pitch = -std::atan2(delta.y,horizontal)*180.f/float(M_PI);
+  const float yaw = std::atan2(delta.z,delta.x)*180.f/float(M_PI);
+
+  camera->setFirstPerson(true);
+  camera->setMarvinMode(Camera::M_Freeze);
+  camera->setPosition(origin);
+  camera->setAngles({pitch,yaw});
+  }
+
+Npc* RuntimeTest::findNpc(std::string_view instance, std::string_view displayName) const {
+  Npc* displayMatch = nullptr;
+  for(uint32_t i=0;i<world->npcCount();++i) {
+    auto* npc = world->npcById(i);
+    if(npc==nullptr)
+      continue;
+    const auto* symbol = world->script().findSymbol(npc->handle().symbol_index());
+    if(symbol!=nullptr && symbol->name()==instance)
+      return npc;
+    if(displayMatch==nullptr && npc->displayName()==displayName)
+      displayMatch = npc;
+    }
+  return displayMatch;
+  }
+
 Npc* RuntimeTest::insertNpc(const std::vector<std::string_view>& candidates, std::string& instance) {
   for(auto name:candidates) {
     if(!isNpcInstance(name))
@@ -738,6 +1003,17 @@ void RuntimeTest::showStatus() {
                   currentOrc.fightStateReached ? "SCRIPT" : "WAIT");
       }
     }
+  else if(mode==Mode::NpcSleepPlacement) {
+    title << "AUTOTEST: Brian sleep placement | L'Hiver Uriziel";
+    details << "bed: " << (sleepResult.bedAttached ? "ATTACHED" : "WAIT")
+            << " | lie: " << (sleepResult.liePoseSeen ? "YES" : "WAIT")
+            << " | raw door: " << (sleepResult.doorClassSeen ? "YES" : "WAIT")
+            << " | door behavior: " << (sleepResult.doorSemanticsSeen ? "WRONG" : "NO")
+            << " | base float: " << sleepResult.baseFloatingSamples
+            << " | root float: " << sleepResult.rootFloatingSamples
+            << " | misplaced: " << sleepResult.misplacedSamples
+            << " | horizontal walk: " << sleepResult.horizontalLocomotionSamples;
+    }
   else {
     title << "AUTOTEST: unknown test " << testName;
     }
@@ -762,6 +1038,34 @@ void RuntimeTest::finish() {
                  std::all_of(orcResults.begin(),orcResults.end(),
                              [](const OrcResult& value){ return value.passed(); });
     }
+  else if(mode==Mode::NpcSleepPlacement) {
+    resultPass = sleepResult.passed();
+    Log::e("[RUNTIME_TEST] sleep result instance=",sleepResult.instance,
+           " result=",passText(resultPass),
+           " gotoBed=",boolText(sleepResult.gotoBedStateSeen),
+           " sleep=",boolText(sleepResult.sleepStateSeen),
+           " bedFixture=",boolText(sleepResult.bedFixtureSeen),
+           " bedAttached=",boolText(sleepResult.bedAttached),
+           " liePose=",boolText(sleepResult.liePoseSeen),
+           " doorClass=",boolText(sleepResult.doorClassSeen),
+           " doorSemantics=",boolText(sleepResult.doorSemanticsSeen),
+           " samples=",sleepResult.samples,
+           " attachedSamples=",sleepResult.attachedSamples,
+           " settledSamples=",sleepResult.settledSamples,
+           " maxTransitionRootAbove=",sleepResult.maxTransitionRootAbove,
+           " baseFloatingSamples=",sleepResult.baseFloatingSamples,
+           " rootFloatingSamples=",sleepResult.rootFloatingSamples,
+           " rootBelowSupportSamples=",sleepResult.rootBelowSupportSamples,
+           " misplacedSamples=",sleepResult.misplacedSamples,
+           " horizontalLocomotionSamples=",sleepResult.horizontalLocomotionSamples,
+           " maxBaseGroundOffset=",sleepResult.maxBaseGroundOffset,
+           " maxBaseAboveSupport=",sleepResult.maxBaseAboveSupport,
+           " maxRootAboveSupport=",sleepResult.maxRootAboveSupport,
+           " maxRootBelowSupport=",sleepResult.maxRootBelowSupport,
+           " maxRootHorizontalOffset=",sleepResult.maxRootHorizontalOffset,
+           " maxAttachmentGroundDelta=",sleepResult.maxAttachmentGroundDelta,
+           " minLocomotionUpright=",sleepResult.minLocomotionUpright);
+    }
   else {
     resultPass = false;
     }
@@ -771,6 +1075,8 @@ void RuntimeTest::finish() {
   Log::e("[RUNTIME_TEST] FINAL test=",testName," result=",passText(resultPass),
          " output=",outputPath);
   restoreQuarantinedNpcs();
+  if(mode==Mode::NpcSleepPlacement && player!=nullptr)
+    player->physic.setEnable(true);
   enter(Phase::Done);
   }
 
@@ -984,7 +1290,47 @@ bool RuntimeTest::writeResult(bool passed) const {
       }
     out << "  ]\n";
     }
-  else {
+  else if(mode==Mode::NpcSleepPlacement) {
+    out << "  \"case\": {\n"
+        << "    \"instance\": \"" << jsonEscape(sleepResult.instance) << "\",\n"
+        << "    \"found\": " << sleepResult.found << ",\n"
+        << "    \"goto_bed_state_seen\": " << sleepResult.gotoBedStateSeen << ",\n"
+        << "    \"sleep_state_seen\": " << sleepResult.sleepStateSeen << ",\n"
+        << "    \"bed_fixture_seen\": " << sleepResult.bedFixtureSeen << ",\n"
+        << "    \"bed_attached\": " << sleepResult.bedAttached << ",\n"
+        << "    \"lie_pose_seen\": " << sleepResult.liePoseSeen << ",\n"
+        << "    \"locomotion_seen\": " << sleepResult.locomotionSeen << ",\n"
+        << "    \"door_class_seen\": " << sleepResult.doorClassSeen << ",\n"
+        << "    \"door_semantics_seen\": " << sleepResult.doorSemanticsSeen << ",\n"
+        << "    \"samples\": " << sleepResult.samples << ",\n"
+        << "    \"attached_samples\": " << sleepResult.attachedSamples << ",\n"
+        << "    \"settled_samples\": " << sleepResult.settledSamples << ",\n"
+        << "    \"max_transition_root_above_cm\": "
+        << sleepResult.maxTransitionRootAbove << ",\n"
+        << "    \"base_floating_samples\": " << sleepResult.baseFloatingSamples << ",\n"
+        << "    \"root_floating_samples\": " << sleepResult.rootFloatingSamples << ",\n"
+        << "    \"root_below_support_samples\": " << sleepResult.rootBelowSupportSamples << ",\n"
+        << "    \"misplaced_samples\": " << sleepResult.misplacedSamples << ",\n"
+        << "    \"horizontal_locomotion_samples\": "
+        << sleepResult.horizontalLocomotionSamples << ",\n"
+        << "    \"max_base_ground_offset_cm\": "
+        << sleepResult.maxBaseGroundOffset << ",\n"
+        << "    \"max_base_above_support_cm\": "
+        << sleepResult.maxBaseAboveSupport << ",\n"
+        << "    \"max_root_above_support_cm\": "
+        << sleepResult.maxRootAboveSupport << ",\n"
+        << "    \"max_root_below_support_cm\": "
+        << sleepResult.maxRootBelowSupport << ",\n"
+        << "    \"max_root_horizontal_offset_cm\": "
+        << sleepResult.maxRootHorizontalOffset << ",\n"
+        << "    \"max_attachment_ground_delta_cm\": "
+        << sleepResult.maxAttachmentGroundDelta << ",\n"
+        << "    \"min_locomotion_upright_ratio\": "
+        << sleepResult.minLocomotionUpright << ",\n"
+        << "    \"passed\": " << sleepResult.passed() << "\n"
+        << "  }\n";
+    }
+  else if(mode==Mode::OrcBehind) {
     out << "  \"cases\": [\n";
     for(size_t i=0;i<orcResults.size();++i) {
       const auto& value = orcResults[i];
