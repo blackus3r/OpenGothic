@@ -145,7 +145,18 @@ void MoveAlgo::tickClimb(uint64_t dt) {
   npc.setPosition(pos);
   }
 
+void MoveAlgo::beginTick() {
+  ticked = false;
+  }
+
+void MoveAlgo::tickPhysics(uint64_t dt) {
+  if(!ticked)
+    tick(dt);
+  }
+
 void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
+  ticked = true;
+
   if(npc.isDown() && (flags==Swim || flags==Dive)) {
     // 'falling' to bottom of the lake
     setState(InAir);
@@ -186,6 +197,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   const bool grav  = (state==InAir || state==Falling || state==JumpUp);
   const auto bs    = npc.bodyStateMasked();
   const auto pos0  = npc.position();
+  const auto phys0 = npc.physic.position();
   const auto dp    = (!grav && state!=Slide) ? npcMoveSpeed(dt,moveFlg) : npcFallSpeed(dt);
   const bool walk  = bool(npc.walkMode() & WalkBit::WM_Walk) && (state==Run);
 
@@ -351,7 +363,12 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
       }
 
     const bool lowHeight = (dY < falldownHeight()*0.75f);
-    if((walk || swim) && !(lowHeight && !npc.isPlayer())) {
+    // Walking NPCs may not step off a ledge, but that rule must only pin an NPC
+    // which was actually standing on support before this move. A Run-state NPC
+    // already in mid-air otherwise gets reset to pos0 forever and never enters
+    // the gravity states.
+    const bool guardLedge = swim || (walk && isSupported(phys0));
+    if(guardLedge && !(lowHeight && !npc.isPlayer())) {
       npc.setPosition(pos0);
 
       info.normal  = dp;
@@ -620,6 +637,13 @@ float MoveAlgo::stepHeight() const {
   if(v>0.f)
     return v;
   return 50;
+  }
+
+bool MoveAlgo::isSupported(const Tempest::Vec3& pos) const {
+  const float offset = npc.physic.groundOffset()+1.f;
+  const auto  ground = npc.world().physic()->landRay(pos+Tempest::Vec3(0,offset,0),
+                                                     offset+eps);
+  return ground.hasCol && std::abs(pos.y-ground.v.y)<=eps;
   }
 
 float MoveAlgo::slideAngle() const {

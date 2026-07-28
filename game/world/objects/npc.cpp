@@ -2351,6 +2351,14 @@ void Npc::tick(uint64_t dt) {
   if(dbg && !isPlayer() && hnpc->id!=kId)
     return;
 
+  mvAlgo.beginTick();
+  tickAi(dt);
+  // Combat, spell and animation branches can return before moving. Ground
+  // resolution and gravity still have to run exactly once for every NPC tick.
+  mvAlgo.tickPhysics(dt);
+  }
+
+void Npc::tickAi(uint64_t dt) {
   assert(go2.flag!=GoToHint::GT_Enemy && go2.flag!=GoToHint::GT_EnemyG);
 
   tickAnimationTags();

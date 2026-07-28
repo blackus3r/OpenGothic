@@ -55,7 +55,9 @@ class MoveAlgo final {
     void    load(Serialize& fin);
     void    save(Serialize& fout) const;
 
+    void    beginTick();
     void    tick(uint64_t dt, MvFlags fai=NoFlag);
+    void    tickPhysics(uint64_t dt);
 
     void    multSpeed(float s){ mulSpeed=s; }
     void    clearSpeed();
@@ -98,6 +100,7 @@ class MoveAlgo final {
     void    tickClimb (uint64_t dt);
     void    tickJumpup(uint64_t dt);
     bool    implTick  (uint64_t dt, MvFlags fai);
+    bool    isSupported(const Tempest::Vec3& pos) const;
 
     bool    tryMove   (float x, float y, float z);
     bool    tryMove   (float x, float y, float z, DynamicWorld::CollisionTest& out);
@@ -158,6 +161,7 @@ class MoveAlgo final {
 
     uint64_t            diveStart  = 0;
     uint64_t            lastBounce = 0;
+    bool                ticked     = false;
 
     static const float   gravity;
     static const float   eps;
