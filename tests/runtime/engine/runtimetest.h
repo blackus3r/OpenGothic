@@ -27,6 +27,9 @@ class RuntimeTest final {
       EnemyHeal,
       OrcBehind,
       NpcSleepPlacement,
+      NpcAirborneGravity,
+      AmbientSoundFalloff,
+      NpcStepSmoothing,
       };
 
     enum class Phase : uint8_t {
@@ -125,6 +128,60 @@ class RuntimeTest final {
       bool passed() const;
       };
 
+    struct AirborneGravityResult {
+      std::string instance;
+      bool        spawned                   = false;
+      bool        verticalClearance          = false;
+      bool        unsupportedInitially       = false;
+      bool        walkModeSet                = false;
+      bool        runStateInitially          = false;
+      bool        castEarlyReturnObserved    = false;
+      bool        enteredAirOnFirstTick      = false;
+      bool        descended                  = false;
+      bool        landed                     = false;
+      bool        aliveAfterLanding           = false;
+      uint32_t    samples                    = 0;
+      uint32_t    airborneSamples            = 0;
+      uint32_t    runAboveGroundSamples      = 0;
+      uint64_t    firstDescentTimeMs         = 0;
+      uint64_t    landingTimeMs              = 0;
+      float       fallHeight                 = 0.f;
+      float       fallThreshold              = 0.f;
+      float       groundY                    = 0.f;
+      float       startY                     = 0.f;
+      float       firstTickY                 = 0.f;
+      float       minimumY                   = 0.f;
+      float       finalGroundError           = 0.f;
+      uint32_t    firstTickState             = 0;
+
+      bool passed() const;
+      };
+
+    struct AmbientSoundResult {
+      float gainAtOrigin       = 0.f;
+      float gainAtReference    = 0.f;
+      float gainAtHalfRadius   = 0.f;
+      float gainNearRadius     = 0.f;
+      float gainAtRadius       = 0.f;
+      float axisLengthApprox   = 0.f;
+      float mixedLengthApprox  = 0.f;
+
+      bool passed() const;
+      };
+
+    struct StepSmoothingResult {
+      std::string instance;
+      bool        spawned             = false;
+      float       physicalStep        = 0.f;
+      float       initialVisualStep   = 0.f;
+      float       midVisualStep       = 0.f;
+      float       finalVisualStep     = 0.f;
+      float       finalVisualError    = 0.f;
+      float       teleportVisualError = 0.f;
+
+      bool passed() const;
+      };
+
     struct QuarantinedNpc {
       Npc*          npc = nullptr;
       Tempest::Vec3 position;
@@ -135,6 +192,9 @@ class RuntimeTest final {
     void tickEnemyHeal(uint64_t dt);
     void tickOrcBehind(uint64_t dt);
     void tickNpcSleepPlacement(uint64_t dt);
+    void tickNpcAirborneGravity(uint64_t dt);
+    void tickAmbientSoundFalloff(uint64_t dt);
+    void tickNpcStepSmoothing(uint64_t dt);
 
     void beginHealCase();
     void sampleHealCase();
@@ -147,6 +207,10 @@ class RuntimeTest final {
 
     void sampleSleepPlacement();
     void frameSleepCamera();
+    void beginAirborneGravity();
+    void sampleAirborneGravity();
+    void runAmbientSoundFalloff();
+    void runNpcStepSmoothing();
     Npc* findNpc(std::string_view instance, std::string_view displayName) const;
 
     Npc* insertNpc(const std::vector<std::string_view>& candidates, std::string& instance);
@@ -205,4 +269,7 @@ class RuntimeTest final {
     Npc*                    sleepSubject = nullptr;
     SleepPlacementResult    sleepResult;
     std::string             sleepLastSignature;
+    AirborneGravityResult   airborneResult;
+    AmbientSoundResult      ambientSoundResult;
+    StepSmoothingResult     stepSmoothingResult;
   };

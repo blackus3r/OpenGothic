@@ -40,6 +40,24 @@ make the reported regressions reproducible.
   pose. A scan of the installed L'Hiver worlds found the same mismatch on all
   199 `BEDHIGH` records, while all 57 actual `oCMobDoor` fixtures use the
   `DOOR` scheme.
+- `npc-airborne-gravity`: inserts a living Orc in a clear outdoor fixture,
+  puts it in `Run + WM_Walk` five metres above support, and forces
+  `Npc::tickCast` to take an early-return path on every frame. The first
+  movement pass must still switch the unsupported NPC to `InAir` or `Falling`;
+  the test then requires measurable descent and a live landing on the sampled
+  ground. This covers both regressions behind permanently floating NPCs:
+  physics skipped by an early AI return and the walk-mode ledge guard pinning
+  an actor which was already airborne.
+- `ambient-sound-falloff`: checks the original Gothic ambient-3D radius curve
+  at its origin, 30-percent reference distance, intermediate distances, and
+  hard cutoff. It also locks down Gothic's approximate 3D distance function.
+  This prevents a backend-wide OpenAL attenuation change from silently
+  replacing the non-directional ambient-sound semantics.
+- `npc-step-smoothing`: inserts an NPC in a clear fixture and applies a
+  deterministic 20 cm ground correction. Collision position must update
+  immediately, the first rendered pose must remain continuous, the visual
+  transform must converge within 0.2 cm after 500 ms, and a direct teleport
+  must bypass smoothing.
 
 Before inserting NPCs, the harness scans terrain for a flat, unobstructed 3D
 volume with no unrelated NPC inside OpenGothic's 30-metre active-NPC radius.
@@ -70,6 +88,18 @@ tests/runtime/run-lhiver-runtime-test-macos.sh \
 tests/runtime/run-lhiver-runtime-test-macos.sh \
   npc-sleep-placement \
   "$HOME/Library/Application Support/OpenGothic"
+
+tests/runtime/run-lhiver-runtime-test-macos.sh \
+  npc-airborne-gravity \
+  "$HOME/Library/Application Support/OpenGothic"
+
+tests/runtime/run-lhiver-runtime-test-macos.sh \
+  ambient-sound-falloff \
+  "$HOME/Library/Application Support/OpenGothic"
+
+tests/runtime/run-lhiver-runtime-test-macos.sh \
+  npc-step-smoothing \
+  "$HOME/Library/Application Support/OpenGothic"
 ```
 
 The runner configures `OPENGOTHIC_RUNTIME_TESTS=ON` in the isolated
@@ -87,7 +117,8 @@ Environment overrides:
 - `OPENGOTHIC_SAVE` (default `5`; `0` for `npc-sleep-placement`)
 - `OPENGOTHIC_RECORD` (`1` by default; set to `0` for JSON/log only)
 - `OPENGOTHIC_RECORD_DURATION` (defaults to 35 seconds for the Orc test,
-  50 seconds for the enemy-heal test, and 12 seconds for the sleep test)
+  50 seconds for the enemy-heal test, and 12 seconds for the sleep and airborne
+  tests; the deterministic falloff and smoothing tests use 8 seconds)
 - `OPENGOTHIC_BUILD_JOBS` (default `8`)
 - `OPENGOTHIC_READY_TIMEOUT` (default `1200` seconds, including first-run
   Metal shader compilation)

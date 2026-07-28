@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <enemy-heal-combat|orc-behind-detection|npc-sleep-placement> <gothic-root> [artifact-dir]" >&2
+  echo "usage: $0 <enemy-heal-combat|orc-behind-detection|npc-sleep-placement|npc-airborne-gravity|ambient-sound-falloff|npc-step-smoothing> <gothic-root> [artifact-dir]" >&2
   exit 2
 }
 
@@ -14,7 +14,7 @@ fi
 test_name=$1
 game_root=$2
 case "$test_name" in
-  enemy-heal-combat|orc-behind-detection|npc-sleep-placement) ;;
+  enemy-heal-combat|orc-behind-detection|npc-sleep-placement|npc-airborne-gravity|ambient-sound-falloff|npc-step-smoothing) ;;
   *) usage ;;
 esac
 
@@ -37,6 +37,10 @@ if [[ -z $record_duration ]]; then
     record_duration=35
   elif [[ $test_name == npc-sleep-placement ]]; then
     record_duration=12
+  elif [[ $test_name == npc-airborne-gravity ]]; then
+    record_duration=12
+  elif [[ $test_name == ambient-sound-falloff || $test_name == npc-step-smoothing ]]; then
+    record_duration=8
   else
     record_duration=50
   fi

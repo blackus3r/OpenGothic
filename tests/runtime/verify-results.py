@@ -164,6 +164,86 @@ def verify_sleep_placement(path: pathlib.Path, data: dict) -> None:
         fail(path, "sleep placement case did not pass")
 
 
+def verify_airborne_gravity(path: pathlib.Path, data: dict) -> None:
+    case = data.get("case", {})
+    required = (
+        "spawned",
+        "vertical_clearance",
+        "unsupported_initially",
+        "walk_mode_set",
+        "run_state_initially",
+        "cast_early_return_observed",
+        "entered_air_on_first_tick",
+        "descended",
+        "landed",
+        "alive_after_landing",
+    )
+    for key in required:
+        if not case.get(key):
+            fail(path, f"airborne gravity did not observe {key}")
+    if case.get("fall_height_cm", 0) <= case.get("ledge_guard_threshold_cm", 0):
+        fail(path, "fixture did not exercise the walk-mode ledge guard")
+    if case.get("first_tick_state") not in (1, 2):
+        fail(path, "NPC did not enter InAir/Falling on the forced early-return tick")
+    if case.get("samples", 0) < 2 or case.get("airborne_samples", 0) < 1:
+        fail(path, "airborne gravity collected too few samples")
+    if case.get("run_above_ground_samples") != 0:
+        fail(path, "NPC remained in Run while unsupported")
+    if case.get("first_descent_time_ms", 0) <= 0:
+        fail(path, "NPC never descended by the measurement threshold")
+    if case.get("landing_time_ms", 0) < case.get("first_descent_time_ms", 0):
+        fail(path, "landing was reported before descent")
+    if case.get("minimum_y_cm", 0) >= case.get("start_y_cm", 0) - 5:
+        fail(path, "NPC height did not measurably decrease")
+    if case.get("final_ground_error_cm", 999) > 3:
+        fail(path, "NPC did not land within three centimetres of support")
+    if not case.get("passed"):
+        fail(path, "airborne gravity case did not pass")
+
+
+def verify_ambient_sound_falloff(path: pathlib.Path, data: dict) -> None:
+    case = data.get("case", {})
+    expected = {
+        "gain_at_origin": 1.0,
+        "gain_at_reference": 1.0,
+        "gain_at_half_radius": 3.0 / 7.0,
+        "gain_near_radius": 1.0 / 21.0,
+        "gain_at_radius": 0.0,
+        "axis_length_approx": 15.0,
+        "mixed_length_approx": 19.5,
+    }
+    for key, value in expected.items():
+        observed = case.get(key)
+        if not isinstance(observed, (int, float)):
+            fail(path, f"ambient falloff did not report {key}")
+        if abs(observed - value) > 0.0001:
+            fail(path, f"ambient falloff {key}: expected {value}, got {observed}")
+    if not case.get("passed"):
+        fail(path, "ambient sound falloff case did not pass")
+
+
+def verify_step_smoothing(path: pathlib.Path, data: dict) -> None:
+    case = data.get("case", {})
+    if not case.get("spawned"):
+        fail(path, "step smoothing did not spawn its NPC")
+    if abs(case.get("physical_step_cm", 0) - 20) > 0.01:
+        fail(path, "step smoothing did not apply the physical correction immediately")
+    if abs(case.get("initial_visual_step_cm", 999)) > 0.01:
+        fail(path, "step smoothing exposed the physical correction in its first frame")
+    mid = case.get("visual_step_after_100ms_cm", 0)
+    final = case.get("visual_step_after_500ms_cm", 0)
+    if not 1 < mid < 19:
+        fail(path, "step smoothing did not interpolate after 100 ms")
+    if final <= mid:
+        fail(path, "step smoothing did not converge toward the physical position")
+    if case.get("final_visual_error_cm", 999) > 0.2:
+        fail(path, "step smoothing did not converge within 0.2 cm")
+    if case.get("teleport_visual_error_cm", 999) > 0.01:
+        fail(path, "step smoothing leaked into a direct teleport")
+    if not case.get("passed"):
+        fail(path, "step smoothing case did not pass")
+
+
 def verify(path_text: str) -> None:
     path = pathlib.Path(path_text)
     with path.open(encoding="utf-8") as source:
@@ -172,6 +252,12 @@ def verify(path_text: str) -> None:
     test_name = data.get("test")
     if test_name == "npc-sleep-placement":
         verify_sleep_placement(path, data)
+        if not data.get("passed"):
+            fail(path, "runtime harness reported FAIL")
+        print(f"PASS {test_name}: {path}")
+        return
+    if test_name == "ambient-sound-falloff":
+        verify_ambient_sound_falloff(path, data)
         if not data.get("passed"):
             fail(path, "runtime harness reported FAIL")
         print(f"PASS {test_name}: {path}")
@@ -197,6 +283,10 @@ def verify(path_text: str) -> None:
         verify_enemy(path, data)
     elif test_name == "orc-behind-detection":
         verify_orc(path, data)
+    elif test_name == "npc-airborne-gravity":
+        verify_airborne_gravity(path, data)
+    elif test_name == "npc-step-smoothing":
+        verify_step_smoothing(path, data)
     else:
         fail(path, f"unknown test {test_name!r}")
 

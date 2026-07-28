@@ -22,6 +22,7 @@
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
 #include "world/world.h"
+#include "world/worldsound.h"
 
 using namespace Tempest;
 
@@ -38,6 +39,11 @@ constexpr uint64_t SleepObserveDuration = 45000;
 constexpr uint64_t SleepSampleInterval  = 100;
 constexpr int64_t  SleepRoutineHour      = 0;
 constexpr int64_t  SleepRoutineMinute    = 30;
+constexpr uint64_t AirborneObserveDuration = 8000;
+constexpr float    AirborneMinimumHeight   = 500.f;
+constexpr float    AirborneHeightMargin    = 100.f;
+constexpr float    AirborneDescentDistance = 5.f;
+constexpr float    AirborneLandingTolerance = 3.f;
 constexpr uint64_t ResultDuration     = 1800;
 constexpr uint64_t StatusRefresh      = 1100;
 constexpr float    MeleeDistance      = 150.f;
@@ -108,6 +114,34 @@ bool RuntimeTest::SleepPlacementResult::passed() const {
          horizontalLocomotionSamples==0;
   }
 
+bool RuntimeTest::AirborneGravityResult::passed() const {
+  return spawned && verticalClearance && unsupportedInitially &&
+         walkModeSet && runStateInitially && castEarlyReturnObserved &&
+         enteredAirOnFirstTick && descended && landed && aliveAfterLanding &&
+         fallHeight>fallThreshold && samples>1 && airborneSamples>0 &&
+         runAboveGroundSamples==0 &&
+         finalGroundError<=AirborneLandingTolerance;
+  }
+
+bool RuntimeTest::AmbientSoundResult::passed() const {
+  constexpr float eps = 0.0001f;
+  return std::abs(gainAtOrigin-1.f)<=eps &&
+         std::abs(gainAtReference-1.f)<=eps &&
+         std::abs(gainAtHalfRadius-3.f/7.f)<=eps &&
+         std::abs(gainNearRadius-1.f/21.f)<=eps &&
+         std::abs(gainAtRadius)<=eps &&
+         std::abs(axisLengthApprox-15.f)<=eps &&
+         std::abs(mixedLengthApprox-19.5f)<=eps;
+  }
+
+bool RuntimeTest::StepSmoothingResult::passed() const {
+  return spawned && std::abs(physicalStep-20.f)<=0.01f &&
+         std::abs(initialVisualStep)<=0.01f &&
+         midVisualStep>1.f && midVisualStep<19.f &&
+         finalVisualStep>midVisualStep &&
+         finalVisualError<=0.2f && teleportVisualError<=0.01f;
+  }
+
 RuntimeTest::RuntimeTest(Gothic& owner, std::string_view name, std::string_view output)
   :owner(owner), marvin(std::make_unique<Marvin>()), testName(name), outputPath(output) {
   if(name=="enemy-heal-combat")
@@ -116,6 +150,12 @@ RuntimeTest::RuntimeTest(Gothic& owner, std::string_view name, std::string_view 
     mode = Mode::OrcBehind;
   else if(name=="npc-sleep-placement")
     mode = Mode::NpcSleepPlacement;
+  else if(name=="npc-airborne-gravity")
+    mode = Mode::NpcAirborneGravity;
+  else if(name=="ambient-sound-falloff")
+    mode = Mode::AmbientSoundFalloff;
+  else if(name=="npc-step-smoothing")
+    mode = Mode::NpcStepSmoothing;
 
   if(outputPath.empty())
     outputPath = std::string(name) + ".json";
@@ -150,6 +190,15 @@ void RuntimeTest::tick(uint64_t dt) {
     case Mode::NpcSleepPlacement:
       tickNpcSleepPlacement(dt);
       break;
+    case Mode::NpcAirborneGravity:
+      tickNpcAirborneGravity(dt);
+      break;
+    case Mode::AmbientSoundFalloff:
+      tickAmbientSoundFalloff(dt);
+      break;
+    case Mode::NpcStepSmoothing:
+      tickNpcStepSmoothing(dt);
+      break;
     case Mode::Invalid:
       if(phase!=Phase::Done) {
         Log::e("[RUNTIME_TEST] unknown test: ",testName);
@@ -161,7 +210,8 @@ void RuntimeTest::tick(uint64_t dt) {
 
 void RuntimeTest::initialize(World& activeWorld, Npc& activePlayer) {
   removeSubject();
-  if(mode==Mode::NpcSleepPlacement && player!=nullptr)
+  if((mode==Mode::NpcSleepPlacement || mode==Mode::NpcAirborneGravity) &&
+     player!=nullptr)
     player->physic.setEnable(true);
   world       = &activeWorld;
   player      = &activePlayer;
@@ -172,6 +222,9 @@ void RuntimeTest::initialize(World& activeWorld, Npc& activePlayer) {
   sleepSubject = nullptr;
   sleepResult = SleepPlacementResult();
   sleepLastSignature.clear();
+  airborneResult = AirborneGravityResult();
+  ambientSoundResult = AmbientSoundResult();
+  stepSmoothingResult = StepSmoothingResult();
   resultPass  = false;
   fixtureQuarantinedNpcCount = 0;
 
@@ -698,6 +751,307 @@ void RuntimeTest::tickNpcSleepPlacement(uint64_t) {
     }
   }
 
+void RuntimeTest::tickNpcAirborneGravity(uint64_t) {
+  switch(phase) {
+    case Phase::Intro:
+      if(phaseTime>=IntroDuration)
+        beginAirborneGravity();
+      break;
+    case Phase::Warmup:
+      break;
+    case Phase::Observe:
+      sampleAirborneGravity();
+      if(airborneResult.landed || phaseTime>=AirborneObserveDuration)
+        enter(Phase::Result);
+      break;
+    case Phase::Result:
+      if(phaseTime>=ResultDuration)
+        finish();
+      break;
+    case Phase::Done:
+      if(phaseTime>=ResultDuration)
+        SystemApi::exit();
+      break;
+    }
+  }
+
+void RuntimeTest::beginAirborneGravity() {
+  airborneResult = AirborneGravityResult();
+  subject = insertNpc(orcCandidates,airborneResult.instance);
+  airborneResult.spawned = subject!=nullptr;
+  if(subject==nullptr) {
+    Log::e("[RUNTIME_TEST] unable to insert airborne-gravity NPC");
+    enter(Phase::Result);
+    return;
+    }
+
+  player->physic.setEnable(false);
+  subject->physic.setEnable(false);
+  subject->clearAiQueue();
+  subject->setTarget(nullptr);
+  subject->setWalkMode(WalkBit::WM_Walk);
+  subject->mvAlgo.clearSpeed();
+
+  airborneResult.fallThreshold = subject->mvAlgo.falldownHeight()*0.75f;
+  airborneResult.fallHeight =
+      std::max(AirborneMinimumHeight,
+               airborneResult.fallThreshold+AirborneHeightMargin);
+
+  const Vec3 side = {-forward.z,0.f,forward.x};
+  const Vec3 candidates[] = {
+    anchor+forward*150.f,
+    anchor+side*160.f,
+    anchor-side*160.f,
+    anchor+forward*150.f+side*160.f,
+    anchor+forward*150.f-side*160.f,
+    anchor,
+    };
+  Vec3 base = anchor;
+  for(const Vec3& candidate:candidates) {
+    const auto ground =
+        world->physic()->landRay(candidate+Vec3(0.f,100.f,0.f),220.f);
+    if(!ground.hasCol || ground.n.y<0.65f ||
+       std::abs(ground.v.y-anchor.y)>15.f)
+      continue;
+    const Vec3 low  = ground.v+Vec3(0.f,5.f,0.f);
+    const Vec3 high = ground.v+Vec3(0.f,airborneResult.fallHeight+150.f,0.f);
+    if(world->physic()->ray(low,high).hasCol)
+      continue;
+    base = ground.v;
+    airborneResult.verticalClearance = true;
+    break;
+    }
+
+  airborneResult.groundY = base.y;
+  const Vec3 start = base+Vec3(0.f,airborneResult.fallHeight,0.f);
+  subject->setPosition(start);
+  subject->physic.setEnable(true);
+  subject->setDirection(forward);
+  subject->updateTransform();
+
+  const int32_t durableHp = 100000;
+  subject->handle().attribute[ATR_HITPOINTSMAX] =
+      std::max(subject->attribute(ATR_HITPOINTSMAX),durableHp);
+  subject->handle().attribute[ATR_HITPOINTS] =
+      subject->handle().attribute[ATR_HITPOINTSMAX];
+
+  const float supportOffset = subject->physic.groundOffset()+1.f;
+  const auto support =
+      world->physic()->landRay(subject->physic.position()+Vec3(0.f,supportOffset,0.f),
+                               supportOffset+2.f);
+  airborneResult.unsupportedInitially =
+      !support.hasCol || std::abs(start.y-support.v.y)>2.f;
+  airborneResult.walkModeSet =
+      bool(subject->walkMode()&WalkBit::WM_Walk);
+  airborneResult.runStateInitially =
+      subject->mvAlgo.state()==MoveAlgo::Run;
+  airborneResult.startY   = start.y;
+  airborneResult.minimumY = start.y;
+
+  // CS_Cast_0 with no inventory spell takes tickCast's early-return path without
+  // invoking script or changing game data. Re-arming it after every sample keeps
+  // AI out of the result while the mandatory movement/physics pass must continue.
+  subject->castLevel        = Npc::CS_Cast_0;
+  subject->currentSpellCast = size_t(-1);
+  subject->castNextTime     = 0;
+
+  frameSubjectCamera();
+  Log::e("[RUNTIME_TEST] airborne fixture instance=",airborneResult.instance,
+         " startY=",airborneResult.startY,
+         " groundY=",airborneResult.groundY,
+         " fallHeight=",airborneResult.fallHeight,
+         " fallThreshold=",airborneResult.fallThreshold,
+         " verticalClearance=",boolText(airborneResult.verticalClearance),
+         " unsupported=",boolText(airborneResult.unsupportedInitially),
+         " walk=",boolText(airborneResult.walkModeSet),
+         " run=",boolText(airborneResult.runStateInitially));
+  enter(Phase::Observe);
+  }
+
+void RuntimeTest::sampleAirborneGravity() {
+  if(subject==nullptr)
+    return;
+
+  ++airborneResult.samples;
+  const float y = subject->position().y;
+  const float groundError = std::abs(y-airborneResult.groundY);
+  const auto state = subject->mvAlgo.state();
+  const bool airborne = state==MoveAlgo::InAir || state==MoveAlgo::Falling;
+
+  airborneResult.minimumY = std::min(airborneResult.minimumY,y);
+  if(airborne)
+    ++airborneResult.airborneSamples;
+  if(state==MoveAlgo::Run && groundError>AirborneLandingTolerance)
+    ++airborneResult.runAboveGroundSamples;
+
+  if(airborneResult.samples==1) {
+    airborneResult.castEarlyReturnObserved =
+        subject->castLevel==Npc::CS_Emit_0;
+    airborneResult.enteredAirOnFirstTick = airborne;
+    airborneResult.firstTickY     = y;
+    airborneResult.firstTickState = uint32_t(state);
+    }
+
+  if(!airborneResult.descended &&
+     y<=airborneResult.startY-AirborneDescentDistance) {
+    airborneResult.descended          = true;
+    airborneResult.firstDescentTimeMs = phaseTime;
+    }
+
+  if(airborneResult.descended && state==MoveAlgo::Run &&
+     groundError<=AirborneLandingTolerance) {
+    airborneResult.landed           = true;
+    airborneResult.aliveAfterLanding = !subject->isDead();
+    airborneResult.landingTimeMs    = phaseTime;
+    airborneResult.finalGroundError = groundError;
+    }
+
+  if(airborneResult.samples==1 || airborneResult.samples%20==0 ||
+     airborneResult.landed) {
+    Log::e("[RUNTIME_TEST] airborne sample n=",airborneResult.samples,
+           " time=",phaseTime,
+           " y=",y,
+           " groundError=",groundError,
+           " state=",uint32_t(state),
+           " castState=",uint32_t(subject->castLevel),
+           " descended=",boolText(airborneResult.descended),
+           " landed=",boolText(airborneResult.landed));
+    }
+
+  if(!airborneResult.landed) {
+    subject->castLevel        = Npc::CS_Cast_0;
+    subject->currentSpellCast = size_t(-1);
+    subject->castNextTime     = 0;
+    }
+  frameSubjectCamera();
+  }
+
+void RuntimeTest::tickAmbientSoundFalloff(uint64_t) {
+  switch(phase) {
+    case Phase::Intro:
+      if(phaseTime>=IntroDuration) {
+        runAmbientSoundFalloff();
+        enter(Phase::Result);
+        }
+      break;
+    case Phase::Result:
+      if(phaseTime>=ResultDuration)
+        finish();
+      break;
+    case Phase::Done:
+      if(phaseTime>=ResultDuration)
+        SystemApi::exit();
+      break;
+    case Phase::Warmup:
+    case Phase::Observe:
+      break;
+    }
+  }
+
+void RuntimeTest::runAmbientSoundFalloff() {
+  constexpr float radius = 10000.f;
+  ambientSoundResult.gainAtOrigin =
+      WorldSound::ambient3dGain(0.f,radius);
+  ambientSoundResult.gainAtReference =
+      WorldSound::ambient3dGain(3000.f,radius);
+  ambientSoundResult.gainAtHalfRadius =
+      WorldSound::ambient3dGain(5000.f,radius);
+  ambientSoundResult.gainNearRadius =
+      WorldSound::ambient3dGain(9000.f,radius);
+  ambientSoundResult.gainAtRadius =
+      WorldSound::ambient3dGain(radius,radius);
+  ambientSoundResult.axisLengthApprox =
+      WorldSound::lengthApprox(Vec3(16.f,0.f,0.f));
+  ambientSoundResult.mixedLengthApprox =
+      WorldSound::lengthApprox(Vec3(16.f,8.f,4.f));
+
+  Log::e("[RUNTIME_TEST] ambient falloff origin=",ambientSoundResult.gainAtOrigin,
+         " reference=",ambientSoundResult.gainAtReference,
+         " half=",ambientSoundResult.gainAtHalfRadius,
+         " nearRadius=",ambientSoundResult.gainNearRadius,
+         " radius=",ambientSoundResult.gainAtRadius,
+         " axisApprox=",ambientSoundResult.axisLengthApprox,
+         " mixedApprox=",ambientSoundResult.mixedLengthApprox);
+  }
+
+void RuntimeTest::tickNpcStepSmoothing(uint64_t) {
+  switch(phase) {
+    case Phase::Intro:
+      if(phaseTime>=IntroDuration) {
+        runNpcStepSmoothing();
+        enter(Phase::Result);
+        }
+      break;
+    case Phase::Result:
+      if(phaseTime>=ResultDuration)
+        finish();
+      break;
+    case Phase::Done:
+      if(phaseTime>=ResultDuration)
+        SystemApi::exit();
+      break;
+    case Phase::Warmup:
+    case Phase::Observe:
+      break;
+    }
+  }
+
+void RuntimeTest::runNpcStepSmoothing() {
+  subject = insertNpc(orcCandidates,stepSmoothingResult.instance);
+  stepSmoothingResult.spawned = subject!=nullptr;
+  if(subject==nullptr)
+    return;
+
+  subject->physic.setEnable(false);
+  subject->clearAiQueue();
+  subject->setPosition(anchor);
+  subject->updateTransform();
+
+  const Vec3 initialPosition = subject->position();
+  const float initialVisualY = subject->transform().at(3,1);
+  Vec3 stepped = initialPosition;
+  stepped.y += 20.f;
+
+  subject->physic.setPosition(stepped);
+  subject->setViewPosition(stepped);
+  subject->smoothGroundCorrection(initialPosition.y);
+  subject->updateAnimation(0,true);
+
+  stepSmoothingResult.physicalStep =
+      subject->position().y-initialPosition.y;
+  stepSmoothingResult.initialVisualStep =
+      subject->transform().at(3,1)-initialVisualY;
+
+  for(unsigned i=0;i<5;++i)
+    subject->updateAnimation(20,true);
+  subject->updateAnimation(0,true);
+  stepSmoothingResult.midVisualStep =
+      subject->transform().at(3,1)-initialVisualY;
+
+  for(unsigned i=0;i<20;++i)
+    subject->updateAnimation(20,true);
+  subject->updateAnimation(0,true);
+  stepSmoothingResult.finalVisualStep =
+      subject->transform().at(3,1)-initialVisualY;
+  stepSmoothingResult.finalVisualError =
+      std::abs(subject->transform().at(3,1)-subject->position().y);
+
+  Vec3 teleported = stepped;
+  teleported.y += 100.f;
+  subject->setPosition(teleported);
+  subject->updateTransform();
+  stepSmoothingResult.teleportVisualError =
+      std::abs(subject->transform().at(3,1)-subject->position().y);
+
+  Log::e("[RUNTIME_TEST] step smoothing instance=",stepSmoothingResult.instance,
+         " physical=",stepSmoothingResult.physicalStep,
+         " visualInitial=",stepSmoothingResult.initialVisualStep,
+         " visual100ms=",stepSmoothingResult.midVisualStep,
+         " visual500ms=",stepSmoothingResult.finalVisualStep,
+         " finalError=",stepSmoothingResult.finalVisualError,
+         " teleportError=",stepSmoothingResult.teleportVisualError);
+  }
+
 void RuntimeTest::sampleSleepPlacement() {
   if(sleepSubject==nullptr)
     return;
@@ -1042,6 +1396,29 @@ void RuntimeTest::showStatus() {
             << " | misplaced: " << sleepResult.misplacedSamples
             << " | horizontal walk: " << sleepResult.horizontalLocomotionSamples;
     }
+  else if(mode==Mode::NpcAirborneGravity) {
+    title << "AUTOTEST: airborne NPC gravity";
+    details << "state: " << airborneResult.firstTickState
+            << " | early return: "
+            << (airborneResult.castEarlyReturnObserved ? "YES" : "WAIT")
+            << " | descended: " << (airborneResult.descended ? "YES" : "WAIT")
+            << " | landed: " << (airborneResult.landed ? "YES" : "WAIT")
+            << " | Run above ground: " << airborneResult.runAboveGroundSamples;
+    }
+  else if(mode==Mode::AmbientSoundFalloff) {
+    title << "AUTOTEST: Gothic ambient sound falloff";
+    details << "origin: " << ambientSoundResult.gainAtOrigin
+            << " | 50% radius: " << ambientSoundResult.gainAtHalfRadius
+            << " | 90% radius: " << ambientSoundResult.gainNearRadius
+            << " | edge: " << ambientSoundResult.gainAtRadius;
+    }
+  else if(mode==Mode::NpcStepSmoothing) {
+    title << "AUTOTEST: NPC stair-step smoothing";
+    details << "physics: " << stepSmoothingResult.physicalStep
+            << " | visual first: " << stepSmoothingResult.initialVisualStep
+            << " | visual 100ms: " << stepSmoothingResult.midVisualStep
+            << " | final error: " << stepSmoothingResult.finalVisualError;
+    }
   else {
     title << "AUTOTEST: unknown test " << testName;
     }
@@ -1096,6 +1473,54 @@ void RuntimeTest::finish() {
            " maxAttachmentGroundDelta=",sleepResult.maxAttachmentGroundDelta,
            " minLocomotionUpright=",sleepResult.minLocomotionUpright);
     }
+  else if(mode==Mode::NpcAirborneGravity) {
+    resultPass = fixtureClear && airborneResult.passed();
+    Log::e("[RUNTIME_TEST] airborne result instance=",airborneResult.instance,
+           " result=",passText(resultPass),
+           " spawned=",boolText(airborneResult.spawned),
+           " verticalClearance=",boolText(airborneResult.verticalClearance),
+           " unsupported=",boolText(airborneResult.unsupportedInitially),
+           " walk=",boolText(airborneResult.walkModeSet),
+           " initialRun=",boolText(airborneResult.runStateInitially),
+           " earlyReturn=",boolText(airborneResult.castEarlyReturnObserved),
+           " firstTickState=",airborneResult.firstTickState,
+           " enteredAirFirstTick=",boolText(airborneResult.enteredAirOnFirstTick),
+           " descended=",boolText(airborneResult.descended),
+           " landed=",boolText(airborneResult.landed),
+           " alive=",boolText(airborneResult.aliveAfterLanding),
+           " samples=",airborneResult.samples,
+           " airborneSamples=",airborneResult.airborneSamples,
+           " runAboveGroundSamples=",airborneResult.runAboveGroundSamples,
+           " firstDescentMs=",airborneResult.firstDescentTimeMs,
+           " landingMs=",airborneResult.landingTimeMs,
+           " startY=",airborneResult.startY,
+           " firstTickY=",airborneResult.firstTickY,
+           " minimumY=",airborneResult.minimumY,
+           " groundError=",airborneResult.finalGroundError);
+    }
+  else if(mode==Mode::AmbientSoundFalloff) {
+    resultPass = ambientSoundResult.passed();
+    Log::e("[RUNTIME_TEST] ambient result=",passText(resultPass),
+           " origin=",ambientSoundResult.gainAtOrigin,
+           " reference=",ambientSoundResult.gainAtReference,
+           " half=",ambientSoundResult.gainAtHalfRadius,
+           " nearRadius=",ambientSoundResult.gainNearRadius,
+           " radius=",ambientSoundResult.gainAtRadius,
+           " axisApprox=",ambientSoundResult.axisLengthApprox,
+           " mixedApprox=",ambientSoundResult.mixedLengthApprox);
+    }
+  else if(mode==Mode::NpcStepSmoothing) {
+    resultPass = fixtureClear && stepSmoothingResult.passed();
+    Log::e("[RUNTIME_TEST] step smoothing result=",passText(resultPass),
+           " instance=",stepSmoothingResult.instance,
+           " spawned=",boolText(stepSmoothingResult.spawned),
+           " physical=",stepSmoothingResult.physicalStep,
+           " visualInitial=",stepSmoothingResult.initialVisualStep,
+           " visual100ms=",stepSmoothingResult.midVisualStep,
+           " visual500ms=",stepSmoothingResult.finalVisualStep,
+           " finalError=",stepSmoothingResult.finalVisualError,
+           " teleportError=",stepSmoothingResult.teleportVisualError);
+    }
   else {
     resultPass = false;
     }
@@ -1105,7 +1530,8 @@ void RuntimeTest::finish() {
   Log::e("[RUNTIME_TEST] FINAL test=",testName," result=",passText(resultPass),
          " output=",outputPath);
   restoreQuarantinedNpcs();
-  if(mode==Mode::NpcSleepPlacement && player!=nullptr)
+  if((mode==Mode::NpcSleepPlacement || mode==Mode::NpcAirborneGravity) &&
+     player!=nullptr)
     player->physic.setEnable(true);
   enter(Phase::Done);
   }
@@ -1361,6 +1787,76 @@ bool RuntimeTest::writeResult(bool passed) const {
         << "    \"min_locomotion_upright_ratio\": "
         << sleepResult.minLocomotionUpright << ",\n"
         << "    \"passed\": " << sleepResult.passed() << "\n"
+        << "  }\n";
+    }
+  else if(mode==Mode::NpcAirborneGravity) {
+    out << "  \"case\": {\n"
+        << "    \"instance\": \"" << jsonEscape(airborneResult.instance) << "\",\n"
+        << "    \"spawned\": " << airborneResult.spawned << ",\n"
+        << "    \"vertical_clearance\": " << airborneResult.verticalClearance << ",\n"
+        << "    \"unsupported_initially\": "
+        << airborneResult.unsupportedInitially << ",\n"
+        << "    \"walk_mode_set\": " << airborneResult.walkModeSet << ",\n"
+        << "    \"run_state_initially\": " << airborneResult.runStateInitially << ",\n"
+        << "    \"cast_early_return_observed\": "
+        << airborneResult.castEarlyReturnObserved << ",\n"
+        << "    \"entered_air_on_first_tick\": "
+        << airborneResult.enteredAirOnFirstTick << ",\n"
+        << "    \"descended\": " << airborneResult.descended << ",\n"
+        << "    \"landed\": " << airborneResult.landed << ",\n"
+        << "    \"alive_after_landing\": " << airborneResult.aliveAfterLanding << ",\n"
+        << "    \"samples\": " << airborneResult.samples << ",\n"
+        << "    \"airborne_samples\": " << airborneResult.airborneSamples << ",\n"
+        << "    \"run_above_ground_samples\": "
+        << airborneResult.runAboveGroundSamples << ",\n"
+        << "    \"first_descent_time_ms\": "
+        << airborneResult.firstDescentTimeMs << ",\n"
+        << "    \"landing_time_ms\": " << airborneResult.landingTimeMs << ",\n"
+        << "    \"fall_height_cm\": " << airborneResult.fallHeight << ",\n"
+        << "    \"ledge_guard_threshold_cm\": "
+        << airborneResult.fallThreshold << ",\n"
+        << "    \"ground_y_cm\": " << airborneResult.groundY << ",\n"
+        << "    \"start_y_cm\": " << airborneResult.startY << ",\n"
+        << "    \"first_tick_y_cm\": " << airborneResult.firstTickY << ",\n"
+        << "    \"minimum_y_cm\": " << airborneResult.minimumY << ",\n"
+        << "    \"final_ground_error_cm\": "
+        << airborneResult.finalGroundError << ",\n"
+        << "    \"first_tick_state\": " << airborneResult.firstTickState << ",\n"
+        << "    \"passed\": " << airborneResult.passed() << "\n"
+        << "  }\n";
+    }
+  else if(mode==Mode::AmbientSoundFalloff) {
+    out << std::setprecision(6)
+        << "  \"case\": {\n"
+        << "    \"gain_at_origin\": " << ambientSoundResult.gainAtOrigin << ",\n"
+        << "    \"gain_at_reference\": " << ambientSoundResult.gainAtReference << ",\n"
+        << "    \"gain_at_half_radius\": "
+        << ambientSoundResult.gainAtHalfRadius << ",\n"
+        << "    \"gain_near_radius\": " << ambientSoundResult.gainNearRadius << ",\n"
+        << "    \"gain_at_radius\": " << ambientSoundResult.gainAtRadius << ",\n"
+        << "    \"axis_length_approx\": "
+        << ambientSoundResult.axisLengthApprox << ",\n"
+        << "    \"mixed_length_approx\": "
+        << ambientSoundResult.mixedLengthApprox << ",\n"
+        << "    \"passed\": " << ambientSoundResult.passed() << "\n"
+        << "  }\n";
+    }
+  else if(mode==Mode::NpcStepSmoothing) {
+    out << "  \"case\": {\n"
+        << "    \"instance\": \"" << jsonEscape(stepSmoothingResult.instance) << "\",\n"
+        << "    \"spawned\": " << stepSmoothingResult.spawned << ",\n"
+        << "    \"physical_step_cm\": " << stepSmoothingResult.physicalStep << ",\n"
+        << "    \"initial_visual_step_cm\": "
+        << stepSmoothingResult.initialVisualStep << ",\n"
+        << "    \"visual_step_after_100ms_cm\": "
+        << stepSmoothingResult.midVisualStep << ",\n"
+        << "    \"visual_step_after_500ms_cm\": "
+        << stepSmoothingResult.finalVisualStep << ",\n"
+        << "    \"final_visual_error_cm\": "
+        << stepSmoothingResult.finalVisualError << ",\n"
+        << "    \"teleport_visual_error_cm\": "
+        << stepSmoothingResult.teleportVisualError << ",\n"
+        << "    \"passed\": " << stepSmoothingResult.passed() << "\n"
         << "  }\n";
     }
   else if(mode==Mode::OrcBehind) {
