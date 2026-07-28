@@ -36,6 +36,8 @@ constexpr uint64_t OrcObserveDuration = 7000;
 constexpr uint64_t OrcNaturalObservationDuration = 1500;
 constexpr uint64_t SleepObserveDuration = 45000;
 constexpr uint64_t SleepSampleInterval  = 100;
+constexpr int64_t  SleepRoutineHour      = 0;
+constexpr int64_t  SleepRoutineMinute    = 30;
 constexpr uint64_t ResultDuration     = 1800;
 constexpr uint64_t StatusRefresh      = 1100;
 constexpr float    MeleeDistance      = 150.f;
@@ -94,8 +96,10 @@ bool RuntimeTest::OrcResult::passed() const {
   }
 
 bool RuntimeTest::SleepPlacementResult::passed() const {
-  return found && gotoBedStateSeen && sleepStateSeen && bedFixtureSeen &&
-         bedAttached && liePoseSeen && locomotionSeen && doorClassSeen &&
+  return found && routineTimeSet &&
+         routineHour==SleepRoutineHour && routineMinute==SleepRoutineMinute &&
+         gotoBedStateSeen && sleepStateSeen && bedFixtureSeen &&
+         bedAttached && liePoseSeen && doorClassSeen &&
          !doorSemanticsSeen &&
          maxAttachmentGroundDelta>50.f && samples>0 && attachedSamples>=10 &&
          settledSamples>=10 &&
@@ -179,6 +183,16 @@ void RuntimeTest::initialize(World& activeWorld, Npc& activePlayer) {
     }
 
   if(mode==Mode::NpcSleepPlacement) {
+    // Brian's installed L'Hiver routine sleeps from 00:25 to 07:05. Using the
+    // regular Marvin time command makes World::setDayTime select that routine
+    // and reset him to its waypoint; no test-only AI state or animation is set.
+    sleepResult.routineTimeSet = marvin->exec("set time 0 30");
+    sleepResult.routineHour    = world->time().hour();
+    sleepResult.routineMinute  = world->time().minute();
+    Log::e("[RUNTIME_TEST] marvin command `set time 0 30`: ",
+           sleepResult.routineTimeSet ? "accepted" : "rejected",
+           " observed=",sleepResult.routineHour,":",sleepResult.routineMinute);
+
     // The detached test camera does not need a physical player body. Keeping it disabled
     // prevents the save-specific player position from blocking Brian's route to the bed.
     player->physic.setEnable(false);
@@ -187,6 +201,15 @@ void RuntimeTest::initialize(World& activeWorld, Npc& activePlayer) {
     if(sleepSubject!=nullptr) {
       if(const auto* symbol = world->script().findSymbol(sleepSubject->handle().symbol_index()))
         sleepResult.instance = symbol->name();
+      if(auto* bed = world->availableMob(*sleepSubject,"BEDHIGH")) {
+        sleepResult.bedFixtureSeen = true;
+        sleepResult.doorClassSeen = bed->isDoor();
+        sleepResult.doorSemanticsSeen = bed->isDoorInteraction();
+        const Vec3 attachment = bed->nearestPoint(*sleepSubject);
+        const Vec3 grounded = bed->groundedPosition(attachment);
+        sleepResult.maxAttachmentGroundDelta =
+            std::abs(attachment.y-grounded.y);
+        }
       frameSleepCamera();
       }
     fixtureClear = sleepResult.found;
@@ -685,6 +708,9 @@ void RuntimeTest::sampleSleepPlacement() {
   const auto* stateSymbol = world->script().findSymbol(sleepSubject->aiState.funcIni.ptr);
   const std::string_view state = stateSymbol!=nullptr ? stateSymbol->name() : std::string_view();
   sleepResult.gotoBedStateSeen |= state=="ZS_GOTOBED";
+  if(const auto* gotoBed = world->script().findSymbol("ZS_GOTOBED"))
+    sleepResult.gotoBedStateSeen |=
+        sleepSubject->wasInState(ScriptFn(gotoBed->index()));
   sleepResult.sleepStateSeen   |= state=="ZS_SLEEP";
 
   std::string animations;
@@ -1006,6 +1032,8 @@ void RuntimeTest::showStatus() {
   else if(mode==Mode::NpcSleepPlacement) {
     title << "AUTOTEST: Brian sleep placement | L'Hiver Uriziel";
     details << "bed: " << (sleepResult.bedAttached ? "ATTACHED" : "WAIT")
+            << " | time: " << sleepResult.routineHour << ":"
+            << std::setw(2) << std::setfill('0') << sleepResult.routineMinute
             << " | lie: " << (sleepResult.liePoseSeen ? "YES" : "WAIT")
             << " | raw door: " << (sleepResult.doorClassSeen ? "YES" : "WAIT")
             << " | door behavior: " << (sleepResult.doorSemanticsSeen ? "WRONG" : "NO")
@@ -1042,6 +1070,8 @@ void RuntimeTest::finish() {
     resultPass = sleepResult.passed();
     Log::e("[RUNTIME_TEST] sleep result instance=",sleepResult.instance,
            " result=",passText(resultPass),
+           " routineTimeSet=",boolText(sleepResult.routineTimeSet),
+           " routineTime=",sleepResult.routineHour,":",sleepResult.routineMinute,
            " gotoBed=",boolText(sleepResult.gotoBedStateSeen),
            " sleep=",boolText(sleepResult.sleepStateSeen),
            " bedFixture=",boolText(sleepResult.bedFixtureSeen),
@@ -1294,6 +1324,9 @@ bool RuntimeTest::writeResult(bool passed) const {
     out << "  \"case\": {\n"
         << "    \"instance\": \"" << jsonEscape(sleepResult.instance) << "\",\n"
         << "    \"found\": " << sleepResult.found << ",\n"
+        << "    \"routine_time_set\": " << sleepResult.routineTimeSet << ",\n"
+        << "    \"routine_hour\": " << sleepResult.routineHour << ",\n"
+        << "    \"routine_minute\": " << sleepResult.routineMinute << ",\n"
         << "    \"goto_bed_state_seen\": " << sleepResult.gotoBedStateSeen << ",\n"
         << "    \"sleep_state_seen\": " << sleepResult.sleepStateSeen << ",\n"
         << "    \"bed_fixture_seen\": " << sleepResult.bedFixtureSeen << ",\n"

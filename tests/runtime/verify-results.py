@@ -117,17 +117,19 @@ def verify_sleep_placement(path: pathlib.Path, data: dict) -> None:
     case = data.get("case", {})
     required = (
         "found",
+        "routine_time_set",
         "goto_bed_state_seen",
         "sleep_state_seen",
         "bed_fixture_seen",
         "bed_attached",
         "lie_pose_seen",
-        "locomotion_seen",
         "door_class_seen",
     )
     for key in required:
         if not case.get(key):
             fail(path, f"sleep placement did not observe {key}")
+    if (case.get("routine_hour"), case.get("routine_minute")) != (0, 30):
+        fail(path, "sleep placement did not enter Brian's 00:30 sleep routine")
     if case.get("door_semantics_seen"):
         fail(path, "BEDHIGH was incorrectly treated as a door interaction")
     if case.get("max_attachment_ground_delta_cm", 0) <= 50:

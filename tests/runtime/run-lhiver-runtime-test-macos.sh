@@ -36,7 +36,7 @@ if [[ -z $record_duration ]]; then
   if [[ $test_name == orc-behind-detection ]]; then
     record_duration=35
   elif [[ $test_name == npc-sleep-placement ]]; then
-    record_duration=52
+    record_duration=12
   else
     record_duration=50
   fi

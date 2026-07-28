@@ -94,6 +94,9 @@ class RuntimeTest final {
     struct SleepPlacementResult {
       std::string instance;
       bool        found                         = false;
+      bool        routineTimeSet                = false;
+      int64_t     routineHour                   = -1;
+      int64_t     routineMinute                 = -1;
       bool        gotoBedStateSeen              = false;
       bool        sleepStateSeen                = false;
       bool        bedFixtureSeen                = false;

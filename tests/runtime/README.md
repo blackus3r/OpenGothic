@@ -29,15 +29,17 @@ make the reported regressions reproducible.
   not enter FightAI in that run, the recording uses a deterministic
   visualization fallback labelled `FightAI=FIXTURE`; that fallback is not
   treated as evidence of detection.
-- `npc-sleep-placement`: follows Brian from the supplied L'Hiver save through
-  `ZS_GOTOBED`, walking, `ZS_SLEEP`, and the `BEDHIGH` attachment. The fixture
-  is important because L'Hiver serializes this bed as `oCMobDoor`; the test
-  therefore reproduces the class/scheme mismatch that bypassed the original
-  MOBSI grounding fix. It samples the final attachment for five seconds and
-  fails on an elevated NPC base, a root bone away from the mattress support, or
-  a horizontal locomotion pose. A scan of the installed L'Hiver worlds found
-  the same mismatch on all 199 `BEDHIGH` records, while all 57 actual
-  `oCMobDoor` fixtures use the `DOOR` scheme.
+- `npc-sleep-placement`: uses the regular Marvin `set time 0 30` command to
+  select Brian's installed 00:25–07:05 sleep routine, then follows the real
+  `ZS_GOTOBED`, `ZS_SLEEP`, and `BEDHIGH` interaction path. It does not inject
+  a test-only AI state or animation. The fixture is important because L'Hiver
+  serializes this bed as `oCMobDoor`; the test therefore reproduces the
+  class/scheme mismatch that bypassed the original MOBSI grounding fix. It
+  samples the final attachment for five seconds and fails on an elevated NPC
+  base, a root bone away from the mattress support, or a horizontal locomotion
+  pose. A scan of the installed L'Hiver worlds found the same mismatch on all
+  199 `BEDHIGH` records, while all 57 actual `oCMobDoor` fixtures use the
+  `DOOR` scheme.
 
 Before inserting NPCs, the harness scans terrain for a flat, unobstructed 3D
 volume with no unrelated NPC inside OpenGothic's 30-metre active-NPC radius.
@@ -85,7 +87,7 @@ Environment overrides:
 - `OPENGOTHIC_SAVE` (default `5`; `0` for `npc-sleep-placement`)
 - `OPENGOTHIC_RECORD` (`1` by default; set to `0` for JSON/log only)
 - `OPENGOTHIC_RECORD_DURATION` (defaults to 35 seconds for the Orc test,
-  50 seconds for the enemy-heal test, and 52 seconds for the sleep test)
+  50 seconds for the enemy-heal test, and 12 seconds for the sleep test)
 - `OPENGOTHIC_BUILD_JOBS` (default `8`)
 - `OPENGOTHIC_READY_TIMEOUT` (default `1200` seconds, including first-run
   Metal shader compilation)
