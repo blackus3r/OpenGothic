@@ -2,6 +2,9 @@
 
 #include <Tempest/SoundEffect>
 
+#include <algorithm>
+#include <cmath>
+
 #include "camera.h"
 #include "game/definitions/musicdefinitions.h"
 #include "game/gamesession.h"
@@ -26,9 +29,12 @@ struct WorldSound::WSound final {
   std::string    vobName;
   Tempest::Vec3  pos;
   float          sndRadius      = 2500;
+  float          volume         = 1.f;
 
   bool           loop           = false;
   bool           active         = false;
+  bool           ambient3d      = false;
+  bool           obstruction    = true;
   uint64_t       delay          = 0;
   uint64_t       delayVar       = 0;
   uint64_t       restartTimeout = 0;
@@ -51,12 +57,21 @@ struct WorldSound::Zone final {
 
 void WorldSound::Effect::setOcclusion(float v) {
   occ = v;
-  eff.setVolume(occ*vol);
+  updateVolume();
+  }
+
+void WorldSound::Effect::setAttenuation(float v) {
+  atten = v;
+  updateVolume();
   }
 
 void WorldSound::Effect::setVolume(float v) {
   vol = v;
-  eff.setVolume(occ*vol);
+  updateVolume();
+  }
+
+void WorldSound::Effect::updateVolume() {
+  eff.setVolume(occ*atten*vol);
   }
 
 WorldSound::WorldSound(GameSession &game, World& owner)
@@ -92,6 +107,9 @@ void WorldSound::addSound(const zenkit::VSound &vob) {
   s.delay     = uint64_t(vob.random_delay * 1000);
   s.delayVar  = uint64_t(vob.random_delay_var * 1000);
   s.eff0      = Gothic::inst().loadSoundFx(vob.sound_name);
+  s.volume    = std::clamp(vob.volume/100.f,0.f,1.f);
+  s.ambient3d = vob.ambient3d;
+  s.obstruction = vob.obstruction;
 
   s.pos       = {vob.position.x,vob.position.y,vob.position.z};
   s.sndRadius = vob.radius;
@@ -192,6 +210,12 @@ void WorldSound::tick(Npc& player) {
 
     i.current = implAddSound(*snd,i.pos,i.sndRadius);
     if(!i.current.isEmpty()) {
+      auto& slot       = *i.current.val;
+      slot.ambient3d   = i.ambient3d;
+      slot.obstruction = i.obstruction;
+      slot.setVolume(slot.vol*i.volume);
+      if(slot.ambient3d)
+        slot.eff.setPosition(plPos);
       effect.emplace_back(i.current.val);
       i.current.play();
       }
@@ -298,7 +322,17 @@ void WorldSound::tickSlot(Effect& slot) {
     slot.eff.play();
     }
 
-  if(slot.ambient) {
+  if(slot.ambient3d) {
+    // Gothic's ambient-3D path is deliberately non-directional. It plays a
+    // listener-centred source and applies its own radius curve instead of the
+    // backend's positional attenuation.
+    slot.eff.setPosition(plPos);
+    slot.setAttenuation(ambient3dGain(lengthApprox(slot.pos-plPos),slot.maxDist));
+    } else {
+    slot.setAttenuation(1.f);
+    }
+
+  if(slot.ambient || !slot.obstruction) {
     slot.setOcclusion(1.f);
     } else {
     auto  dyn  = owner.physic();
@@ -310,6 +344,32 @@ void WorldSound::tickSlot(Effect& slot) {
       occ = dyn->soundOclusion(head, pos);
     slot.setOcclusion(std::max(0.f,1.f-occ));
     }
+  }
+
+float WorldSound::ambient3dGain(float distance, float radius) {
+  if(radius<=0.f || distance>=radius)
+    return 0.f;
+  if(distance<=0.f)
+    return 1.f;
+
+  const float reference = 0.3f*radius;
+  if(distance<=reference)
+    return 1.f;
+
+  const float cutoff = 1.f-(distance-reference)/(radius-reference);
+  return std::clamp((reference/distance)*cutoff,0.f,1.f);
+  }
+
+float WorldSound::lengthApprox(const Tempest::Vec3& value) {
+  float x = std::abs(value.x);
+  float y = std::abs(value.y);
+  float z = std::abs(value.z);
+  if(x<y)
+    std::swap(x,y);
+  if(x<z)
+    std::swap(x,z);
+  const float yz = y+z;
+  return x-x/16.f+yz/4.f+yz/8.f;
   }
 
 void WorldSound::initSlot(WorldSound::Effect& slot) {

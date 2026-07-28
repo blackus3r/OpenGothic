@@ -17,6 +17,7 @@ class World;
 class Npc;
 class Sound;
 class SoundFx;
+class RuntimeTest;
 
 class WorldSound final {
   public:
@@ -48,13 +49,18 @@ class WorldSound final {
       Tempest::Vec3        pos;
       float                vol     = 1.f;
       float                occ     = 1.f;
+      float                atten   = 1.f;
       float                maxDist = 0.f;
       bool                 loop    = false;
       bool                 active  = true;
       bool                 ambient = false;
+      bool                 ambient3d = false;
+      bool                 obstruction = true;
 
       void setOcclusion(float occ);
+      void setAttenuation(float atten);
       void setVolume(float v);
+      void updateVolume();
       };
 
     using PEffect = std::shared_ptr<Effect>;
@@ -64,6 +70,8 @@ class WorldSound final {
     void    tickSlot(Effect& slot);
     void    initSlot(Effect& slot);
     bool    setMusic(std::string_view zone, GameMusic::Tags tags);
+    static float ambient3dGain(float distance, float radius);
+    static float lengthApprox(const Tempest::Vec3& value);
 
     Sound   implAddSound(const SoundFx& s, const Tempest::Vec3& pos, float rangeMax);
     Sound   implAddSound(Tempest::SoundEffect&& s, const Tempest::Vec3& pos, float rangeMax);
@@ -90,4 +98,5 @@ class WorldSound final {
     static const float maxDist;
 
   friend class Sound;
+  friend class RuntimeTest;
   };
