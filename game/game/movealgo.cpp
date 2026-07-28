@@ -417,8 +417,9 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     fallSpeed += slide*float(dt)*gravity;
     //fallCount  = 1;
     if(gValid && std::abs(dY)<stickThreshold) {
-      // step up
-      npc.tryMove(Tempest::Vec3(0,-dY,0));
+      const float previousY = npc.position().y;
+      if(npc.tryMove(Tempest::Vec3(0,-dY,0)))
+        npc.smoothGroundCorrection(previousY);
       }
 
     npc.setAnimRotate(0);
@@ -485,15 +486,18 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     if(ground==pos.y)
       return true;
     if(ground<=pos.y) {
-      // step up
       // npc.setPosition(adjPos);
-      npc.tryMove(Tempest::Vec3(0,-dY,0));
+      const float previousY = npc.position().y;
+      if(npc.tryMove(Tempest::Vec3(0,-dY,0)) && state==Run)
+        npc.smoothGroundCorrection(previousY);
       return true;
       }
     if(ground>=pos.y) {
       // inside ground
       // npc.setPosition(adjPos);
-      npc.tryMove(Tempest::Vec3(0,-dY,0));
+      const float previousY = npc.position().y;
+      if(npc.tryMove(Tempest::Vec3(0,-dY,0)) && state==Run)
+        npc.smoothGroundCorrection(previousY);
       return true;
       }
     }

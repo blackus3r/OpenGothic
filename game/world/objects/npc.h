@@ -483,6 +483,8 @@ class Npc final {
     void      tickRegen(int32_t& v,const int32_t max,const int32_t chg, const uint64_t dt);
     void      tickAi(uint64_t dt);
     void      setViewPosition(const Tempest::Vec3& pos);
+    void      smoothGroundCorrection(float previousY);
+    void      resetGroundSmoothing();
     bool      tickCast(uint64_t dt);
 
     int       aiOutputOrderId() const;
@@ -564,6 +566,7 @@ class Npc final {
     // visual props (cache)
     uint8_t                        durtyTranform=0;
     Tempest::Vec3                  lastGroundNormal;
+    float                          groundSmoothY=0.f;
 
     DynamicWorld::NpcItem          physic;
 

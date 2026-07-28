@@ -403,6 +403,7 @@ void Npc::loadTrState(Serialize& fin) {
 bool Npc::setPosition(float ix, float iy, float iz) {
   if(x==ix && y==iy && z==iz)
     return false;
+  resetGroundSmoothing();
   x = ix;
   y = iy;
   z = iz;
@@ -419,6 +420,18 @@ void Npc::setViewPosition(const Tempest::Vec3& pos) {
   x = pos.x;
   y = pos.y;
   z = pos.z;
+  durtyTranform |= TR_Pos;
+  }
+
+void Npc::smoothGroundCorrection(float previousY) {
+  groundSmoothY -= y-previousY;
+  durtyTranform |= TR_Pos;
+  }
+
+void Npc::resetGroundSmoothing() {
+  if(groundSmoothY==0.f)
+    return;
+  groundSmoothY = 0.f;
   durtyTranform |= TR_Pos;
   }
 
@@ -4859,7 +4872,7 @@ Matrix4x4 Npc::mkPositionMatrix() const {
 
   Matrix4x4 mt = Matrix4x4();
   mt.identity();
-  mt.translate(x,y,z);
+  mt.translate(x,y+groundSmoothY,z);
   mt.rotateOY(90-angle);
   if(angY!=0)
     mt.rotateOX(-angY);
@@ -4879,6 +4892,12 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   if(isPlayer() && camera!=nullptr && camera->isFree())
     dt = 0;
 
+  const bool groundState = mvAlgo.state()==MoveAlgo::Run ||
+                           mvAlgo.state()==MoveAlgo::InWater ||
+                           mvAlgo.state()==MoveAlgo::Slide;
+  if(!groundState)
+    resetGroundSmoothing();
+
   if(durtyTranform) {
     const auto ground = groundNormal();
     if(lastGroundNormal!=ground) {
@@ -4891,7 +4910,7 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
     if(durtyTranform==TR_Pos) {
       pos = visual.transform();
       pos.set(3,0,x);
-      pos.set(3,1,y);
+      pos.set(3,1,y+groundSmoothY);
       pos.set(3,2,z);
       } else {
       pos = mkPositionMatrix();
@@ -4904,4 +4923,12 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   bool syncAtt = visual.updateAnimation(this,nullptr,owner,dt,force);
   if(syncAtt)
     visual.syncAttaches();
+
+  if(dt>0 && groundSmoothY!=0.f) {
+    constexpr float smoothTimeMs = 100.f;
+    groundSmoothY *= std::exp(-float(dt)/smoothTimeMs);
+    if(std::abs(groundSmoothY)<0.01f)
+      groundSmoothY = 0.f;
+    durtyTranform |= TR_Pos;
+    }
   }
